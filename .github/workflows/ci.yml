@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
+
+      - name: Run the full test suite
+        # Unit tests plus the end-to-end test, which starts the mock
+        # x64dbg bridge and the real MCP server, connects with a real
+        # MCP client and exercises static triage (vendored triage.py
+        # subprocess), the full debugger flow, capa (fake executable),
+        # session report composition and the degradation paths.
+        run: .venv/bin/pytest tests/ -q
