@@ -74,6 +74,9 @@ class State:
             "path": req.get("path"),
             "state": "paused",
             "breakpoints": [],
+            # Per-session register file: stepping one session must not
+            # move another session's RIP (multi-session isolation).
+            "registers": dict(REGISTERS),
         }
         self.sessions[sid] = session
         return session
@@ -128,7 +131,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/registers":
             s = self._session({})
             if s:
-                return self._send(200, {"registers": REGISTERS, "cip": REGISTERS["rip"]})
+                return self._send(200, {"registers": s["registers"],
+                                        "cip": s["registers"]["rip"]})
         elif path == "/callstack":
             s = self._session({})
             if s:
@@ -160,8 +164,9 @@ class Handler(BaseHTTPRequestHandler):
             action = req.get("action")
             s["state"] = "running" if action == "run" else "paused"
             if action in ("step_into", "step_over"):
-                REGISTERS["rip"] = f"0x{ENTRY + 7:X}"
-            return self._send(200, {"state": s["state"], "cip": REGISTERS["rip"]})
+                s["registers"]["rip"] = f"0x{ENTRY + 7:X}"
+            return self._send(200, {"state": s["state"],
+                                    "cip": s["registers"]["rip"]})
         if path == "/cmd":
             return self._send(200, {"output": f"mock executed: {req.get('command', '')}"})
         if path == "/breakpoints":

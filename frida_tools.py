@@ -6,12 +6,16 @@ structured "not available" result instead of raising, so the rest of
 the platform keeps working.
 
 Events produced by scripts via send() are collected into a bounded
-ring buffer per session and read back with get_events().
+ring buffer per session and read back with get_events(). If the
+manager is given an events directory, every event is also appended
+to artifacts/frida/<session>.jsonl as it arrives, so the record
+survives the ring buffer (and the session) for reporting.
 """
 
 from __future__ import annotations
 
 import itertools
+import json
 import threading
 from collections import deque
 from datetime import datetime, timezone
@@ -34,11 +38,36 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def summarize_events(events: list[dict], recent: int = 10) -> dict:
+    """Group an event list by API name with counts + the latest events.
+
+    The API name comes from the event payload's "api" field (the
+    bundled scripts send() {api: ..., args: ...}); portal events like
+    script-load markers live there too. Anything without one falls
+    back to the event's "type".
+    """
+    by_api: dict[str, int] = {}
+    for event in events:
+        payload = event.get("payload")
+        api = payload.get("api") if isinstance(payload, dict) else None
+        key = api or event.get("type") or "unknown"
+        by_api[key] = by_api.get(key, 0) + 1
+    recent = max(0, int(recent))
+    return {
+        "total": len(events),
+        "by_api": {k: by_api[k] for k in sorted(by_api)},
+        "recent": events[-recent:] if recent else [],
+    }
+
+
 class FridaManager:
-    def __init__(self):
+    def __init__(self, events_dir: Path | None = None):
         self._lock = threading.Lock()
         self._counter = itertools.count(1)
         self._sessions: dict[str, dict] = {}
+        self.events_dir = Path(events_dir) if events_dir else None
+        if self.events_dir is not None:
+            self.events_dir.mkdir(parents=True, exist_ok=True)
 
     # -- status -------------------------------------------------------------
     def status(self) -> dict:
@@ -94,11 +123,28 @@ class FridaManager:
         return key
 
     def _on_detached(self, key: str, reason) -> None:
+        self._record_event(key, {"ts": _now(), "type": "detached",
+                                 "payload": {"reason": str(reason)}})
+
+    def _record_event(self, key: str, event: dict) -> None:
+        """Append an event to the session ring buffer and, if an
+        events directory is configured, to artifacts/frida/<key>.jsonl.
+
+        The file write happens even if the in-memory session is already
+        gone (e.g. a detached notification racing stop()): the JSONL
+        record is the durable copy used by reports.
+        """
         with self._lock:
             entry = self._sessions.get(key)
-        if entry:
-            entry["events"].append({"ts": _now(), "type": "detached",
-                                    "payload": {"reason": str(reason)}})
+            if entry is not None:
+                entry["events"].append(event)
+            if self.events_dir is not None:
+                try:
+                    with open(self.events_dir / f"{key}.jsonl", "a",
+                              encoding="utf-8") as fh:
+                        fh.write(json.dumps(event, default=str) + "\n")
+                except OSError:
+                    pass  # persistence is best-effort; never break a hook
 
     def _get(self, key: str) -> dict:
         entry = self._sessions.get(key)
@@ -112,11 +158,10 @@ class FridaManager:
             return self._unavailable()
         entry = self._get(frida_session)
         script = entry["session"].create_script(source)
-        events = entry["events"]
 
         def on_message(message, _data):
             payload = message.get("payload") if isinstance(message, dict) else None
-            events.append({
+            self._record_event(frida_session, {
                 "ts": _now(),
                 "type": message.get("type", "message") if isinstance(message, dict) else "message",
                 "payload": payload if payload is not None else str(message),
@@ -145,6 +190,24 @@ class FridaManager:
         return {"ok": True, "frida_session": frida_session,
                 "count": len(events[-limit:]), "total_buffered": len(events),
                 "events": events[-limit:]}
+
+    def events_digest(self, frida_session: str, recent: int = 10) -> dict:
+        """Per-API event counts for a session plus the latest events.
+
+        Counts come from the in-memory buffer; the same events are on
+        disk under artifacts/frida/<session>.jsonl when persistence is
+        configured (see the events_file field).
+        """
+        if not FRIDA_AVAILABLE:
+            return self._unavailable()
+        entry = self._get(frida_session)
+        digest = summarize_events(list(entry["events"]), recent=recent)
+        events_file = None
+        if self.events_dir is not None:
+            candidate = self.events_dir / f"{frida_session}.jsonl"
+            events_file = str(candidate) if candidate.is_file() else None
+        return {"ok": True, "frida_session": frida_session,
+                "events_file": events_file, **digest}
 
     def stop(self, frida_session: str) -> dict:
         if not FRIDA_AVAILABLE:

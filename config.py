@@ -43,6 +43,7 @@ class Config:
     artifacts_dir: Path = field(default_factory=lambda: BASE_DIR / "artifacts")
     bridge_url: str | None = None
     pesieve_path: str | None = None
+    inbox_dir: Path | None = None
     audit_log_path: Path | None = None
 
     @property
@@ -65,6 +66,8 @@ def load_config() -> Config:
         bridge_url=_env("RELAB_X64DBG_BRIDGE_URL"),
         pesieve_path=_env("RELAB_PESIEVE_PATH"),
     )
+    if inbox := _env("RELAB_INBOX_DIR"):
+        cfg.inbox_dir = Path(inbox)
     if audit := _env("RELAB_AUDIT_LOG"):
         cfg.audit_log_path = Path(audit)
 

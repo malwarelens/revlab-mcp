@@ -16,22 +16,35 @@ Configuration is entirely via RELAB_* environment variables (config.py).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 
+import capa_tools
+import ghidra_tools
+import inbox as inbox_mod
+import report as report_mod
 import unpack as unpack_mod
 from audit import AuditLog, audited
 from config import Config, load_config
-from debugger import DebuggerError, make_backend
+from debugger import DebuggerBackend, DebuggerError, make_backend
 from frida_tools import FridaManager
 from samples import SampleStore
 from sessions import SessionManager
 
 BASE_DIR = Path(__file__).resolve().parent
 TRIAGE_SCRIPT = BASE_DIR / "vendor" / "triage.py"
+
+
+def _server_version() -> str:
+    try:
+        return (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        return "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -69,17 +82,33 @@ def build_server(cfg: Config) -> FastMCP:
     audit = audited(audit_log)
     store = SampleStore(cfg.samples_dir)
     sessions = SessionManager(cfg.sessions_file)
-    frida_mgr = FridaManager()
-    backend = make_backend(cfg.bridge_url)
+    frida_mgr = FridaManager(cfg.artifacts_dir / "frida")
 
     mcp = FastMCP("revlab-mcp", host=cfg.host, port=cfg.port,
                   instructions=(
                       "Malware reverse-engineering lab server. Samples stay on "
-                      "this host: register them with register_sample, analyse "
-                      "with static_triage, debug via the debug_* tools (x64dbg "
-                      "bridge), instrument with frida_* tools, and unpack with "
-                      "pe_sieve_scan / dump_memory_region / carve_pe_from_dump. "
+                      "this host: register them with register_sample (or bulk-"
+                      "register a drop folder with scan_inbox), analyse "
+                      "with static_triage, capa_analyze and ghidra_analyze, "
+                      "debug via the debug_* tools (x64dbg bridge; pass "
+                      "session_id to route calls to a per-session debugger), "
+                      "instrument with frida_* "
+                      "tools, unpack with pe_sieve_scan / dump_memory_region "
+                      "/ carve_pe_from_dump, check the platform with "
+                      "lab_health, and summarise a finished session "
+                      "with compose_session_report. "
                       "No tool returns sample bytes."))
+
+    # -- debugger backends: one shared default + one per analysis session --
+    # Calls without session_id go to the "current" backend -- the one
+    # most recently launched/attached -- which preserves the original
+    # single-session workflow. Calls with session_id route to the
+    # backend instance bound to that analysis session; each analysis
+    # session owns at most one backend instance, so concurrent debug
+    # sessions never cross-talk.
+    default_backend = make_backend(cfg.bridge_url)
+    session_backends: dict[str, DebuggerBackend] = {}
+    current: dict = {"key": "", "backend": default_backend}
 
     # -- helpers ------------------------------------------------------------
     def no_backend() -> dict:
@@ -87,13 +116,68 @@ def build_server(cfg: Config) -> FastMCP:
                 "error": "no debugger bridge configured; set "
                          "RELAB_X64DBG_BRIDGE_URL on the analysis host"}
 
-    def guard(fn, *args, **kwargs) -> dict:
-        if backend is None:
+    def backend_for(session_id: str = "", create: bool = False):
+        """Resolve the backend for a call: the per-session instance
+        when session_id is given (optionally creating it), else the
+        current backend."""
+        if session_id:
+            inst = session_backends.get(session_id)
+            if inst is None and create:
+                inst = make_backend(cfg.bridge_url)
+                if inst is not None:
+                    session_backends[session_id] = inst
+            return inst
+        return current["backend"]
+
+    def guard(inst, fn, *args, **kwargs) -> dict:
+        if inst is None:
             return no_backend()
         try:
             return fn(*args, **kwargs)
         except DebuggerError as exc:
             return {"ok": False, "configured": True, "error": str(exc)}
+
+    def routed(session_id: str, method: str, *args, **kwargs) -> dict:
+        """Call `method` on the backend bound to session_id (or the
+        current backend when session_id is empty)."""
+        inst = backend_for(session_id)
+        if inst is None:
+            return no_backend()
+        return guard(inst, getattr(inst, method), *args, **kwargs)
+
+    # -- health-check helpers -------------------------------------------------
+    def _dir_writable(path) -> bool:
+        try:
+            return path is not None and Path(path).is_dir() \
+                and os.access(path, os.W_OK)
+        except OSError:
+            return False
+
+    def _bridge_health() -> dict:
+        if not cfg.bridge_url:
+            return {"configured": False, "url": None, "reachable": None,
+                    "health": None}
+        try:
+            resp = httpx.get(f"{cfg.bridge_url.rstrip('/')}/health",
+                             timeout=3.0, trust_env=False)
+            health = None
+            if resp.status_code == 200:
+                try:
+                    health = resp.json()
+                except ValueError:
+                    health = None
+            return {"configured": True, "url": cfg.bridge_url,
+                    "reachable": resp.status_code == 200,
+                    "status_code": resp.status_code, "health": health}
+        except Exception as exc:  # noqa: BLE001 - health reports, not raises
+            return {"configured": True, "url": cfg.bridge_url,
+                    "reachable": False, "health": None,
+                    "error": f"{type(exc).__name__}: {exc}"}
+
+    def _tool_count() -> int | None:
+        manager = getattr(mcp, "_tool_manager", None)
+        tools = getattr(manager, "_tools", None)
+        return len(tools) if isinstance(tools, dict) else None
 
     def run_triage(sample_id: str) -> dict:
         path = store.stored_path(sample_id)
@@ -137,6 +221,17 @@ def build_server(cfg: Config) -> FastMCP:
         """Metadata for one sample (sample_id = SHA-256 hex)."""
         return {"ok": True, **store.get_info(sample_id)}
 
+    @mcp.tool()
+    @audit
+    def scan_inbox() -> dict:
+        """Register every file in the RELAB_INBOX_DIR drop directory.
+
+        New files are copied into the sample store; already-registered
+        files and per-file failures are reported separately. Source
+        files are never deleted or modified.
+        """
+        return inbox_mod.scan_inbox(store, cfg.inbox_dir)
+
     # -- static analysis ------------------------------------------------------
     @mcp.tool()
     @audit
@@ -167,131 +262,218 @@ def build_server(cfg: Config) -> FastMCP:
             "indicators": triage.get("indicators"),
         }
 
+    @mcp.tool()
+    @audit
+    def capa_analyze(sample_id: str) -> dict:
+        """Capability detection with capa (ATT&CK / MBC grouped summary).
+
+        Requires capa on the analysis host (RELAB_CAPA_PATH or PATH);
+        returns a structured 'not configured' result otherwise. The
+        sample is analysed in place on this host and never executed by
+        revlab itself.
+        """
+        return capa_tools.run_capa(store.stored_path(sample_id),
+                                   sample_id=sample_id)
+
+    @mcp.tool()
+    @audit
+    def ghidra_analyze(sample_id: str) -> dict:
+        """Deep static analysis with Ghidra headless: function
+        inventory, import mapping, decompiled snippets for functions
+        that call suspicious APIs, and string-reference hotspots.
+
+        Requires Ghidra on the analysis host (RELAB_GHIDRA_PATH or
+        analyzeHeadless on PATH); returns a structured 'not
+        configured' result otherwise. The sample is imported in place
+        on this host; the temporary project is deleted afterwards.
+        """
+        return ghidra_tools.run_ghidra(store.stored_path(sample_id),
+                                       sample_id=sample_id)
+
     # -- debugger (x64dbg bridge) ---------------------------------------------
     @mcp.tool()
     @audit
-    def debug_status() -> dict:
-        """Whether a debugger bridge is configured and a session is live."""
-        if backend is None:
+    def debug_status(session_id: str = "") -> dict:
+        """Debugger bridge status. Without session_id: the current
+        backend plus every per-session backend. With session_id: the
+        backend bound to that analysis session."""
+        if default_backend is None and not session_backends:
             return no_backend()
-        return {"ok": True, "configured": True, "backend": backend.name,
-                "bridge_url": cfg.bridge_url, "active": backend.active,
-                "bridge_session": backend.bridge_session_id, "pid": backend.pid}
+        if session_id:
+            inst = session_backends.get(session_id)
+            if inst is None:
+                return {"ok": True, "configured": True,
+                        "session_id": session_id, "active": False,
+                        "bridge_session": None, "pid": None,
+                        "note": "no debugger backend bound to this "
+                                "session yet; debug_launch into it first"}
+            return {"ok": True, "configured": True, "session_id": session_id,
+                    "backend": inst.name, "active": inst.active,
+                    "bridge_session": inst.bridge_session_id, "pid": inst.pid}
+        inst = current["backend"]
+        return {"ok": True, "configured": True,
+                "backend": inst.name if inst else None,
+                "bridge_url": cfg.bridge_url,
+                "active": inst.active if inst else False,
+                "bridge_session": inst.bridge_session_id if inst else None,
+                "pid": inst.pid if inst else None,
+                "current_session": current["key"] or None,
+                "debug_sessions": {
+                    key: {"active": b.active,
+                          "bridge_session": b.bridge_session_id,
+                          "pid": b.pid}
+                    for key, b in session_backends.items()}}
 
     @mcp.tool()
     @audit
     def debug_launch(sample_id: str, arguments: str = "",
-                     analysis_session: str = "") -> dict:
+                     analysis_session: str = "", session_id: str = "") -> dict:
         """Launch a registered sample under the debugger (starts paused).
 
-        Pass analysis_session (from session_create) to link the debug
-        session into an analysis session.
+        Routing: session_id (or analysis_session) binds the launch to
+        that analysis session's own backend instance, so several
+        sessions can debug concurrently; without either, the shared
+        current backend is used. Pass analysis_session to also link
+        the bridge session into the analysis session record.
         """
-        if backend is None:
+        key = session_id or analysis_session
+        inst = backend_for(key, create=True) if key else default_backend
+        if inst is None:
             return no_backend()
         try:
-            result = backend.launch(str(store.stored_path(sample_id)), arguments)
+            result = inst.launch(str(store.stored_path(sample_id)), arguments)
         except DebuggerError as exc:
             return {"ok": False, "configured": True, "error": str(exc)}
+        current["key"] = key
+        current["backend"] = inst
         if analysis_session:
-            sessions.attach_debugger(analysis_session, backend.bridge_session_id)
+            sessions.attach_debugger(analysis_session, inst.bridge_session_id)
             result["analysis_session"] = analysis_session
+        if key:
+            result["routed_session"] = key
         return result
 
     @mcp.tool()
     @audit
-    def debug_attach(pid: int, analysis_session: str = "") -> dict:
-        """Attach the debugger to a running process on the analysis host."""
-        result = guard(backend.attach, pid) if backend else no_backend()
-        if analysis_session and result.get("ok"):
-            sessions.attach_debugger(analysis_session, backend.bridge_session_id)
-            result["analysis_session"] = analysis_session
+    def debug_attach(pid: int, analysis_session: str = "",
+                     session_id: str = "") -> dict:
+        """Attach the debugger to a running process on the analysis
+        host. session_id / analysis_session route like debug_launch."""
+        key = session_id or analysis_session
+        inst = backend_for(key, create=True) if key else default_backend
+        result = guard(inst, inst.attach, pid) if inst else no_backend()
+        if result.get("ok"):
+            current["key"] = key
+            current["backend"] = inst
+            if analysis_session:
+                sessions.attach_debugger(analysis_session,
+                                         inst.bridge_session_id)
+                result["analysis_session"] = analysis_session
+            if key:
+                result["routed_session"] = key
         return result
 
     @mcp.tool()
     @audit
-    def debug_terminate() -> dict:
-        """Terminate the current debug session."""
-        return guard(backend.terminate) if backend else no_backend()
+    def debug_terminate(session_id: str = "") -> dict:
+        """Terminate a debug session: the one bound to session_id, or
+        the current backend's session when session_id is empty."""
+        inst = backend_for(session_id)
+        if inst is None:
+            return no_backend()
+        result = guard(inst, inst.terminate)
+        if result.get("ok"):
+            # Unbind every routing entry that pointed at this instance
+            # (an instance manages at most one live session; once it
+            # ends, its session binding is gone too).
+            for key in [k for k, b in session_backends.items() if b is inst]:
+                session_backends.pop(key)
+            if current["backend"] is inst:
+                current["key"] = ""
+                current["backend"] = default_backend
+        return result
 
     @mcp.tool()
     @audit
-    def debug_command(command: str) -> dict:
-        """Send a raw command to the debugger via the bridge (escape hatch)."""
-        return guard(backend.command, command) if backend else no_backend()
+    def debug_command(command: str, session_id: str = "") -> dict:
+        """Send a raw command to the debugger via the bridge (escape
+        hatch). session_id routes to that analysis session's debugger;
+        empty routes to the current backend."""
+        return routed(session_id, "command", command)
 
     @mcp.tool()
     @audit
-    def debug_set_breakpoint(location: str) -> dict:
+    def debug_set_breakpoint(location: str, session_id: str = "") -> dict:
         """Set a breakpoint at an address ('0x401000') or 'module!symbol'."""
-        return guard(backend.set_breakpoint, location) if backend else no_backend()
+        return routed(session_id, "set_breakpoint", location)
 
     @mcp.tool()
     @audit
-    def debug_list_breakpoints() -> dict:
-        """List breakpoints in the current debug session."""
-        return guard(backend.list_breakpoints) if backend else no_backend()
+    def debug_list_breakpoints(session_id: str = "") -> dict:
+        """List breakpoints in a debug session (current by default)."""
+        return routed(session_id, "list_breakpoints")
 
     @mcp.tool()
     @audit
-    def debug_delete_breakpoint(location: str) -> dict:
+    def debug_delete_breakpoint(location: str, session_id: str = "") -> dict:
         """Delete a breakpoint by address or 'module!symbol'."""
-        return guard(backend.delete_breakpoint, location) if backend else no_backend()
+        return routed(session_id, "delete_breakpoint", location)
 
     @mcp.tool()
     @audit
-    def debug_run() -> dict:
+    def debug_run(session_id: str = "") -> dict:
         """Resume execution of the debuggee."""
-        return guard(backend.run) if backend else no_backend()
+        return routed(session_id, "run")
 
     @mcp.tool()
     @audit
-    def debug_pause() -> dict:
+    def debug_pause(session_id: str = "") -> dict:
         """Pause the debuggee."""
-        return guard(backend.pause) if backend else no_backend()
+        return routed(session_id, "pause")
 
     @mcp.tool()
     @audit
-    def debug_step_into() -> dict:
+    def debug_step_into(session_id: str = "") -> dict:
         """Single-step into the next instruction."""
-        return guard(backend.step_into) if backend else no_backend()
+        return routed(session_id, "step_into")
 
     @mcp.tool()
     @audit
-    def debug_step_over() -> dict:
+    def debug_step_over(session_id: str = "") -> dict:
         """Single-step over the next instruction."""
-        return guard(backend.step_over) if backend else no_backend()
+        return routed(session_id, "step_over")
 
     @mcp.tool()
     @audit
-    def debug_registers() -> dict:
+    def debug_registers(session_id: str = "") -> dict:
         """Current register set of the paused debuggee."""
-        return guard(backend.get_registers) if backend else no_backend()
+        return routed(session_id, "get_registers")
 
     @mcp.tool()
     @audit
-    def debug_read_memory(address: str, size: int) -> dict:
+    def debug_read_memory(address: str, size: int, session_id: str = "") -> dict:
         """Read debuggee memory as hex. Capped at 64 KiB per call by
         design; use dump_memory_region for larger regions."""
-        return guard(backend.read_memory, address, size) if backend else no_backend()
+        return routed(session_id, "read_memory", address, size)
 
     @mcp.tool()
     @audit
-    def debug_disassemble(address: str, count: int = 16) -> dict:
+    def debug_disassemble(address: str, count: int = 16,
+                          session_id: str = "") -> dict:
         """Disassemble `count` instructions starting at `address`."""
-        return guard(backend.disassemble, address, count) if backend else no_backend()
+        return routed(session_id, "disassemble", address, count)
 
     @mcp.tool()
     @audit
-    def debug_callstack() -> dict:
+    def debug_callstack(session_id: str = "") -> dict:
         """Current call stack of the debuggee."""
-        return guard(backend.get_callstack) if backend else no_backend()
+        return routed(session_id, "get_callstack")
 
     @mcp.tool()
     @audit
-    def debug_modules() -> dict:
+    def debug_modules(session_id: str = "") -> dict:
         """Modules loaded in the debuggee."""
-        return guard(backend.list_modules) if backend else no_backend()
+        return routed(session_id, "list_modules")
 
     # -- Frida ------------------------------------------------------------------
     @mcp.tool()
@@ -348,10 +530,33 @@ def build_server(cfg: Config) -> FastMCP:
 
     @mcp.tool()
     @audit
+    def frida_load_crypto_monitor(frida_session: str) -> dict:
+        """Load the bundled crypto_monitor.js (CryptEncrypt /
+        CryptDecrypt / BCryptEncrypt with data-length + hex previews)."""
+        return frida_mgr.load_bundled_script(frida_session, "crypto_monitor.js")
+
+    @mcp.tool()
+    @audit
+    def frida_load_process_network(frida_session: str) -> dict:
+        """Load the bundled process_network.js (CreateProcess, WinINet /
+        WinHTTP requests, DNS queries)."""
+        return frida_mgr.load_bundled_script(frida_session,
+                                             "process_network.js")
+
+    @mcp.tool()
+    @audit
     def frida_get_events(frida_session: str, limit: int = 200,
                          clear: bool = False) -> dict:
         """Read buffered events emitted by scripts in a Frida session."""
         return frida_mgr.get_events(frida_session, limit, clear)
+
+    @mcp.tool()
+    @audit
+    def frida_events_digest(frida_session: str, recent: int = 10) -> dict:
+        """Summarise a Frida session's events: counts grouped by API
+        name plus the most recent events. Events are also persisted to
+        artifacts/frida/<session>.jsonl as they arrive."""
+        return frida_mgr.events_digest(frida_session, recent)
 
     @mcp.tool()
     @audit
@@ -370,13 +575,15 @@ def build_server(cfg: Config) -> FastMCP:
 
     @mcp.tool()
     @audit
-    def dump_memory_region(address: str, size: int) -> dict:
+    def dump_memory_region(address: str, size: int, session_id: str = "") -> dict:
         """Dump debuggee memory to artifacts/dumps/ via the debugger
-        backend. Returns metadata (path, size, sha256) -- never bytes."""
-        if backend is None:
+        backend. Returns metadata (path, size, sha256) -- never bytes.
+        session_id routes to that analysis session's debugger."""
+        inst = backend_for(session_id)
+        if inst is None:
             return no_backend()
         try:
-            return unpack_mod.dump_memory_region(backend, address, size,
+            return unpack_mod.dump_memory_region(inst, address, size,
                                                  cfg.artifacts_dir)
         except DebuggerError as exc:
             return {"ok": False, "configured": True, "error": str(exc)}
@@ -423,6 +630,84 @@ def build_server(cfg: Config) -> FastMCP:
     def session_close(session_id: str) -> dict:
         """Mark an analysis session closed."""
         return {"ok": True, **sessions.close(session_id)}
+
+    @mcp.tool()
+    @audit
+    def compose_session_report(session_id: str) -> dict:
+        """Compose a Markdown report for an analysis session and write
+        it to artifacts/reports/. Combines the sample metadata, static
+        triage result, debugger activity (from the audit log), Frida
+        events, pe-sieve/dump/carve artifact metadata and analyst
+        notes. Returns the report path and summary counts."""
+        session = sessions.get(session_id)
+        triage, triage_error = None, None
+        if session.get("sample_id"):
+            try:
+                triage = run_triage(session["sample_id"])
+            except Exception as exc:  # noqa: BLE001 - report notes the failure
+                triage_error = f"{type(exc).__name__}: {exc}"
+        frida_events = {}
+        for frida_id in session.get("frida_sessions") or []:
+            try:
+                frida_events[frida_id] = frida_mgr.get_events(frida_id)
+            except Exception as exc:  # noqa: BLE001 - e.g. server restarted
+                frida_events[frida_id] = {"ok": False, "error": str(exc)}
+        result = report_mod.compose_session_report(
+            session_id, sessions=sessions, store=store, triage=triage,
+            triage_error=triage_error, frida_events=frida_events,
+            artifacts_dir=cfg.artifacts_dir, audit_log_path=cfg.audit_log)
+        return {"ok": True, **result}
+
+    # -- platform health ---------------------------------------------------------
+    @mcp.tool()
+    @audit
+    def lab_health() -> dict:
+        """One-shot platform self-check: configuration summary (bind
+        address/port, sample-store and artifacts writability), bridge
+        /health reachability, per-integration status for capa / ghidra
+        / frida / pe-sieve (available / configured / missing), sample
+        and session counts, and the number of registered tools."""
+        capa_path = capa_tools.find_capa()
+        ghidra_path = ghidra_tools.find_ghidra()
+        frida_state = frida_mgr.status()
+        sieve = cfg.pesieve_path
+        all_sessions = sessions.list_sessions()
+        return {
+            "ok": True,
+            "version": _server_version(),
+            "config": {
+                "host": cfg.host,
+                "port": cfg.port,
+                "token_auth": bool(cfg.token),
+                "samples_dir": str(cfg.samples_dir),
+                "samples_writable": _dir_writable(cfg.samples_dir),
+                "artifacts_dir": str(cfg.artifacts_dir),
+                "artifacts_writable": _dir_writable(cfg.artifacts_dir),
+                "inbox_dir": str(cfg.inbox_dir) if cfg.inbox_dir else None,
+                "inbox_configured": cfg.inbox_dir is not None,
+            },
+            "bridge": _bridge_health(),
+            "integrations": {
+                "capa": {"status": "available" if capa_path else "missing",
+                         "path": capa_path},
+                "ghidra": {"status": "available" if ghidra_path else "missing",
+                           "path": ghidra_path},
+                "frida": {"status": "available" if frida_state["available"]
+                          else "missing",
+                          "version": frida_state["version"]},
+                "pe_sieve": {
+                    "status": ("available" if sieve and Path(sieve).is_file()
+                               else "configured" if sieve else "missing"),
+                    "path": sieve},
+            },
+            "samples": {"count": len(store.list_samples())},
+            "sessions": {
+                "total": len(all_sessions),
+                "open": sum(1 for s in all_sessions
+                            if s.get("status") == "open"),
+            },
+            "tools": {"count": _tool_count()},
+        }
 
     return mcp
 
