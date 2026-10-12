@@ -1,0 +1,14 @@
+# revlab x64dbg bridge adapter — runtime dependencies (Windows analysis host)
+#
+# The adapter's HTTP layer is Python standard library only. The single
+# third-party dependency is the x64dbg-automate Python client, which
+# talks to the x64dbg Automate plugin over ZeroMQ/msgpack.
+#
+# Version verified against PyPI on 2026-10: latest release 0.9.2,
+# requires Python >= 3.10. The plugin and client must be the same
+# COMPAT_VERSION ("ghost_fungus" in 0.9.x) or the client refuses to
+# connect — keep plugin and client releases in step.
+x64dbg_automate==0.9.2
+
+# Tests only (bridge_adapter/tests/, run on any OS):
+#   pip install pytest
