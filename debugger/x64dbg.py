@@ -48,7 +48,17 @@ class X64dbgBackend(DebuggerBackend):
         return self.bridge_session_id
 
     # -- session ----------------------------------------------------------
+    def _require_idle(self, action: str) -> None:
+        # Invariant (see base.py): one backend instance manages at most
+        # one live debug session. Re-launching would silently orphan
+        # the previous bridge session, so refuse instead.
+        if self.active:
+            raise DebuggerError(
+                f"this backend already has an active session "
+                f"({self.bridge_session_id}); terminate it before {action}")
+
     def launch(self, sample_path: str, arguments: str = "") -> dict:
+        self._require_idle("launching again")
         data = self._request("POST", "/session/start",
                              json={"path": sample_path, "arguments": arguments})
         self.bridge_session_id = data.get("session_id")
@@ -56,6 +66,7 @@ class X64dbgBackend(DebuggerBackend):
         return {"ok": True, "backend": self.name, **data}
 
     def attach(self, pid: int) -> dict:
+        self._require_idle("attaching again")
         data = self._request("POST", "/session/start", json={"pid": int(pid)})
         self.bridge_session_id = data.get("session_id")
         self.pid = data.get("pid", int(pid))
