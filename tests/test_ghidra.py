@@ -15,6 +15,8 @@ import pytest
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
+import stat
+
 import ghidra_tools  # noqa: E402
 
 FAKE_GHIDRA = Path(__file__).resolve().parent / "fake_ghidra.py"
@@ -28,8 +30,18 @@ def sample(tmp_path):
 
 
 @pytest.fixture()
-def with_fake_ghidra(monkeypatch):
-    monkeypatch.setenv("RELAB_GHIDRA_PATH", str(FAKE_GHIDRA))
+def with_fake_ghidra(monkeypatch, tmp_path):
+    """Point RELAB_GHIDRA_PATH at an executable *copy* of the fake.
+
+    Copying (instead of using the in-repo file) keeps the tests
+    independent of the executable bit surviving in the source tree —
+    a web-UI upload to GitHub drops file modes, which broke CI.
+    """
+    exe = tmp_path / "fake_ghidra.py"
+    exe.write_text(FAKE_GHIDRA.read_text(encoding="utf-8"),
+                   encoding="utf-8")
+    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("RELAB_GHIDRA_PATH", str(exe))
     monkeypatch.delenv("FAKE_GHIDRA_MODE", raising=False)
 
 
