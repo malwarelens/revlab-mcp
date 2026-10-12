@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Runtime state -- samples and artifacts must never be committed
+samples/
+artifacts/
+*.jsonl
+
+# Test scratch output
+tests/samples_out/
