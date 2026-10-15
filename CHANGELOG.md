@@ -4,6 +4,19 @@ All notable changes to revlab-mcp are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Audit-log unit tests** — new `tests/test_audit.py` pins the audit
+  log's no-payload contract directly: argument summarisation truncates
+  long strings, caps list/dict sizes and applies the overall length
+  cap; result summaries carry shape only (keys / length / type), never
+  values; `AuditLog.write` emits the documented JSONL fields with
+  error truncation; and the `audited` decorator logs ok/error calls
+  and re-raises. Previously `audit.py` was only exercised indirectly
+  through the end-to-end test.
+
 ## [1.2.0] - 2026-10-12
 
 ### Added
