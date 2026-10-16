@@ -240,7 +240,7 @@ python3 -m venv .venv
 * **Unit tests** (`tests/test_units.py`, `tests/test_capa.py`,
   `tests/test_report.py`, `tests/test_ghidra.py`,
   `tests/test_inbox.py`, `tests/test_frida_events.py`,
-  `tests/test_audit.py`,
+  `tests/test_audit.py`, `tests/test_unpack.py`,
   `tests/test_debug_sessions.py`) cover config enforcement (including
   the non-loopback token rule), the sample store (including
   path-traversal resistance), session persistence, the PE carver, the
@@ -249,7 +249,10 @@ python3 -m venv .venv
   bulk-registration accounting (new / existing / failed), Frida
   event persistence to JSONL and the per-API digest, the audit log's
   no-payload contract (argument/result summarisation and truncation,
-  ok/error logging), bundled-script
+  ok/error logging), the unpack wrappers (carve-from-file artifacts
+  jailing and de-duplication, memory-dump 64 KiB chunking with
+  short/empty-read stops, pe-sieve degradation and stdout parsing
+  against a fake executable), bundled-script
   syntax (`node --check`), and two-backend debug isolation against
   the mock bridge (breakpoints, run state and registers stay
   per-session).

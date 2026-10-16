@@ -156,8 +156,8 @@ def pe_sieve_scan(pesieve_path: str | None, pid: int,
     if not exe.is_file():
         return {"ok": False, "configured": True,
                 "error": f"pe-sieve executable not found at configured path: {pesieve_path}"}
-    out_dir = Path(artifacts_dir) / "pe_sieve" / f"pid{pid}_" + \
-        datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out_dir = Path(artifacts_dir) / "pe_sieve" / (
+        f"pid{pid}_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
         proc = subprocess.run(

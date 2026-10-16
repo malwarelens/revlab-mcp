@@ -6,7 +6,29 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **pe-sieve scan output directory** — `pe_sieve_scan` built its
+  per-run output path as `Path(...) / f"pid{pid}_" + <timestamp>`;
+  because `/` binds tighter than `+`, the expression evaluated to
+  `PosixPath + str` and raised `TypeError` whenever pe-sieve was
+  configured with an existing executable, so a configured scan could
+  never run. The timestamp concatenation is now parenthesised.
+  Previously the configured path was only exercised up to the
+  "not configured" / "not found" early returns.
+
 ### Added
+
+- **Unpack unit tests** — new `tests/test_unpack.py` pins the
+  tool-facing unpack wrappers directly: `carve_pe_from_file` jails
+  its source to the artifacts directory (including `..` traversal)
+  and de-duplicates identical carved images; `dump_memory_region`
+  rejects non-positive sizes, chunks backend reads at the 64 KiB cap,
+  stops on short/empty reads and returns metadata only;
+  `pe_sieve_scan` degrades when not configured / not found / timed
+  out and parses the JSON document out of a fake executable's noisy
+  stdout (raw-output fallback otherwise). Writing these tests is
+  what exposed the output-directory bug above.
 
 - **Audit-log unit tests** — new `tests/test_audit.py` pins the audit
   log's no-payload contract directly: argument summarisation truncates
