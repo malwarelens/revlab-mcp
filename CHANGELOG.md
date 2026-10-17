@@ -30,6 +30,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
   stdout (raw-output fallback otherwise). Writing these tests is
   what exposed the output-directory bug above.
 
+- **Config / session unit tests** — new `tests/test_config_sessions.py`
+  pins the token rule beyond the three cases in `test_units.py`:
+  loopback spellings (`localhost` in any case, `::1`, the rest of
+  127.0.0.0/8) start without a token, while `0.0.0.0`, `::`, LAN
+  addresses and plain hostnames (not IP literals, so never provably
+  loopback) are refused without one; empty/blank environment values
+  fall back to defaults, and the inbox / audit-log plumbing is
+  covered. For `sessions.py` it pins unknown-session errors on every
+  entry point, corrupt-state recovery, Frida attach de-duplication
+  and fresh-session defaults. Previously both modules were only
+  exercised on their happy paths.
+
 - **Audit-log unit tests** — new `tests/test_audit.py` pins the audit
   log's no-payload contract directly: argument summarisation truncates
   long strings, caps list/dict sizes and applies the overall length
