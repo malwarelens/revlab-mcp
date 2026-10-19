@@ -11,11 +11,16 @@ no sample bytes, no raw memory content.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 _MAX_EVENTS_RENDERED = 50
 _MAX_DEBUG_RENDERED = 100
+
+# Carved files are named by their SHA-256 (see unpack.py); a stem is
+# only labelled as a hash when it really is 64 lowercase hex chars.
+_SHA256_STEM_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _now() -> str:
@@ -110,7 +115,8 @@ def collect_artifacts(artifacts_dir) -> dict:
             if carved.is_file():
                 meta = _file_meta(carved)
                 # carved files are named by their SHA-256 (see unpack.py)
-                meta["sha256"] = carved.stem if len(carved.stem) == 64 else None
+                meta["sha256"] = carved.stem \
+                    if _SHA256_STEM_RE.match(carved.stem) else None
                 out["carved"].append(meta)
     return out
 

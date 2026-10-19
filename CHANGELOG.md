@@ -8,6 +8,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Carved-file SHA-256 label in reports** — `collect_artifacts`
+  labelled any carved file whose stem was 64 characters long as a
+  SHA-256, so a 64-character non-hex file name dropped into
+  artifacts/carved/ was rendered in session reports as a hash. The
+  stem is now only labelled when it is 64 lowercase hex characters,
+  matching how `unpack.py` actually names carved files.
+
 - **pe-sieve scan output directory** — `pe_sieve_scan` built its
   per-run output path as `Path(...) / f"pid{pid}_" + <timestamp>`;
   because `/` binds tighter than `+`, the expression evaluated to
@@ -18,6 +25,16 @@ and the project uses [Semantic Versioning](https://semver.org/).
   "not configured" / "not found" early returns.
 
 ### Added
+
+- **Report collector unit tests** — new
+  `tests/test_report_collectors.py` pins `collect_debug_activity`
+  (window bounds are inclusive, only `debug_*` calls are kept,
+  malformed lines are skipped, entries with an unparseable or
+  missing timestamp are kept because they cannot be windowed out)
+  and `collect_artifacts` (missing root yields empty buckets,
+  stray files / nested directories are ignored, carved stems must
+  be real hex to be labelled SHA-256). Previously both collectors
+  were only exercised indirectly through report composition.
 
 - **Unpack unit tests** — new `tests/test_unpack.py` pins the
   tool-facing unpack wrappers directly: `carve_pe_from_file` jails
