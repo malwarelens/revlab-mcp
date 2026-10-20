@@ -29,9 +29,13 @@ class SessionManager:
     def _load(self) -> dict:
         if self.state_file.is_file():
             try:
-                return json.loads(self.state_file.read_text(encoding="utf-8"))
+                data = json.loads(self.state_file.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 return {}
+            # Valid JSON with the wrong top-level shape (a list, a
+            # number, null, ...) is just as corrupt as unparseable
+            # JSON: recover empty instead of crashing on .values().
+            return data if isinstance(data, dict) else {}
         return {}
 
     def _save(self) -> None:

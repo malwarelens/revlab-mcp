@@ -8,6 +8,14 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **State-file recovery for non-object JSON** — `SampleStore` and
+  `SessionManager` recovered to an empty state only when their
+  on-disk JSON was unparseable; valid JSON with the wrong top-level
+  shape (a list, a number, `null`, ...) was returned as-is, so the
+  first `list_samples()` / `list_sessions()` call crashed with
+  `AttributeError` instead of recovering. Both loaders now treat a
+  non-object top level as corrupt and start empty.
+
 - **Carved-file SHA-256 label in reports** — `collect_artifacts`
   labelled any carved file whose stem was 64 characters long as a
   SHA-256, so a 64-character non-hex file name dropped into
@@ -25,6 +33,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
   "not configured" / "not found" early returns.
 
 ### Added
+
+- **State recovery unit tests** — new `tests/test_state_recovery.py`
+  pins both stores against unparseable index/state files and valid
+  but non-object JSON payloads (list / number / string / `null` /
+  bool), and checks each store stays usable and overwrites the bad
+  file cleanly on the next write. Previously only the session
+  manager's unparseable-file case was covered.
 
 - **Report collector unit tests** — new
   `tests/test_report_collectors.py` pins `collect_debug_activity`

@@ -241,9 +241,11 @@ python3 -m venv .venv
   `tests/test_report.py`, `tests/test_ghidra.py`,
   `tests/test_inbox.py`, `tests/test_frida_events.py`,
   `tests/test_audit.py`, `tests/test_unpack.py`,
+  `tests/test_state_recovery.py`,
   `tests/test_debug_sessions.py`) cover config enforcement (including
   the non-loopback token rule), the sample store (including
-  path-traversal resistance), session persistence, the PE carver, the
+  path-traversal resistance), session persistence, state-file
+  recovery from unparseable and non-object JSON, the PE carver, the
   capa result parser, session report composition against real triage
   output, the Ghidra runner against a fake analyzeHeadless, inbox
   bulk-registration accounting (new / existing / failed), Frida
