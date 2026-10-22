@@ -8,6 +8,19 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Frida `get_events` limit handling** — `FridaManager.get_events`
+  sliced its ring buffer with a bare `events[-limit:]`, so
+  `limit=0` returned *every* buffered event (`-0` is `0`) and a
+  negative limit returned a shifted window, instead of no events.
+  The limit is now clamped at zero — mirroring how
+  `summarize_events` already treats `recent` — and non-positive
+  limits return an empty window while `total_buffered` still
+  reports the real buffer size. Pinned by new `get_events` tests
+  in `tests/test_frida_events.py` (latest window, over-total limit,
+  zero / negative limits, `clear`, unknown session, degradation
+  without Frida), which previously only exercised the digest and
+  persistence paths.
+
 - **State-file recovery for non-object JSON** — `SampleStore` and
   `SessionManager` recovered to an empty state only when their
   on-disk JSON was unparseable; valid JSON with the wrong top-level

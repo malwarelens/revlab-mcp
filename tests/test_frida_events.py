@@ -113,6 +113,70 @@ def test_events_digest_degrades_without_frida(monkeypatch, tmp_path):
     assert result["configured"] is False
 
 
+def _manager_with_events(tmp_path, monkeypatch, count=5):
+    monkeypatch.setattr(frida_tools, "FRIDA_AVAILABLE", True)
+    mgr = FridaManager(tmp_path / "frida")
+    entry = _fake_entry()
+    for i in range(count):
+        entry["events"].append(_event(f"Api{i}"))
+    mgr._sessions["frida-1"] = entry
+    return mgr
+
+
+def test_get_events_returns_latest_window(tmp_path, monkeypatch):
+    mgr = _manager_with_events(tmp_path, monkeypatch)
+    result = mgr.get_events("frida-1", limit=2)
+    assert result["ok"] is True
+    assert result["count"] == 2
+    assert result["total_buffered"] == 5
+    assert [e["payload"]["api"] for e in result["events"]] == ["Api3", "Api4"]
+
+
+def test_get_events_limit_above_total_returns_all(tmp_path, monkeypatch):
+    mgr = _manager_with_events(tmp_path, monkeypatch)
+    result = mgr.get_events("frida-1", limit=200)
+    assert result["count"] == 5
+    assert result["total_buffered"] == 5
+
+
+def test_get_events_zero_limit_returns_none(tmp_path, monkeypatch):
+    """limit=0 must not fall through the events[-0:] slice to all."""
+    mgr = _manager_with_events(tmp_path, monkeypatch)
+    result = mgr.get_events("frida-1", limit=0)
+    assert result["count"] == 0
+    assert result["events"] == []
+    assert result["total_buffered"] == 5
+
+
+def test_get_events_negative_limit_returns_none(tmp_path, monkeypatch):
+    mgr = _manager_with_events(tmp_path, monkeypatch)
+    result = mgr.get_events("frida-1", limit=-3)
+    assert result["count"] == 0
+    assert result["events"] == []
+    assert result["total_buffered"] == 5
+
+
+def test_get_events_clear_empties_buffer(tmp_path, monkeypatch):
+    mgr = _manager_with_events(tmp_path, monkeypatch)
+    result = mgr.get_events("frida-1", limit=2, clear=True)
+    assert result["count"] == 2
+    assert mgr.get_events("frida-1")["total_buffered"] == 0
+
+
+def test_get_events_unknown_session_raises(tmp_path, monkeypatch):
+    mgr = _manager_with_events(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="unknown frida session"):
+        mgr.get_events("frida-404")
+
+
+def test_get_events_degrades_without_frida(monkeypatch, tmp_path):
+    monkeypatch.setattr(frida_tools, "FRIDA_AVAILABLE", False)
+    mgr = FridaManager(tmp_path / "frida")
+    result = mgr.get_events("frida-1")
+    assert result["ok"] is False
+    assert result["configured"] is False
+
+
 def test_record_event_survives_missing_session(tmp_path):
     """A detached event racing stop() still lands on disk."""
     mgr = FridaManager(tmp_path / "frida")

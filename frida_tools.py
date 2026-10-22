@@ -187,9 +187,14 @@ class FridaManager:
         events = list(entry["events"])
         if clear:
             entry["events"].clear()
+        # Clamp like summarize_events does for `recent`: a bare
+        # events[-limit:] slice would return *everything* for
+        # limit == 0 and a shifted window for negative limits.
+        limit = max(0, int(limit))
+        selected = events[-limit:] if limit else []
         return {"ok": True, "frida_session": frida_session,
-                "count": len(events[-limit:]), "total_buffered": len(events),
-                "events": events[-limit:]}
+                "count": len(selected), "total_buffered": len(events),
+                "events": selected}
 
     def events_digest(self, frida_session: str, recent: int = 10) -> dict:
         """Per-API event counts for a session plus the latest events.
