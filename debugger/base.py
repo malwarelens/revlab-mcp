@@ -26,15 +26,24 @@ class DebuggerNotConfigured(DebuggerError):
 
 
 def parse_address(value) -> int:
-    """Accept int, '0x...' hex, bare hex with a-f letters, or decimal."""
+    """Accept int, '0x...' hex, bare hex with a-f letters, or decimal.
+
+    Raises DebuggerError (not ValueError) on unparseable input so the
+    server's guard() and the dump_memory_region wrapper turn a malformed
+    address into a structured {"ok": False, ...} result instead of an
+    unhandled exception.
+    """
     if isinstance(value, int):
         return value
     text = str(value).strip()
-    if text.lower().startswith("0x"):
+    try:
+        if text.lower().startswith("0x"):
+            return int(text, 16)
+        if text.isdigit():
+            return int(text, 10)
         return int(text, 16)
-    if text.isdigit():
-        return int(text, 10)
-    return int(text, 16)
+    except ValueError:
+        raise DebuggerError(f"invalid address: {value!r}")
 
 
 def fmt_address(value: int) -> str:

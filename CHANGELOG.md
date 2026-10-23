@@ -8,6 +8,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Malformed debugger addresses now return structured errors** —
+  `debugger/base.py::parse_address` raised a bare `ValueError` on
+  unparseable input (e.g. `debug_read_memory` with
+  `address="not-an-address"`), which escaped the server's `guard()` /
+  `dump_memory_region` wrappers as an unhandled MCP tool error. It now
+  raises `DebuggerError("invalid address: ...")`, so every affected tool
+  (`debug_read_memory`, `debug_set_breakpoint`,
+  `debug_delete_breakpoint`, `debug_disassemble`, `dump_memory_region`)
+  returns a structured `{"ok": False, "error": ...}` result. Pinned by
+  new `parse_address` unit tests (accepted forms + garbage inputs) in
+  `tests/test_units.py`.
+
 - **Frida `get_events` limit handling** — `FridaManager.get_events`
   sliced its ring buffer with a bare `events[-limit:]`, so
   `limit=0` returned *every* buffered event (`-0` is `0`) and a

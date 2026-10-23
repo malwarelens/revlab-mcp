@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import make_samples  # noqa: E402
 from config import load_config  # noqa: E402
+from debugger.base import DebuggerError, parse_address  # noqa: E402
 from samples import SampleStore  # noqa: E402
 from sessions import SessionManager  # noqa: E402
 from unpack import carve_pe  # noqa: E402
@@ -150,3 +151,25 @@ def test_carve_pe_skips_truncated_and_garbage(tmp_path):
     assert carve_pe(truncated, tmp_path) == []
     assert carve_pe(b"MZ" + b"\x00" * 500, tmp_path) == []
     assert carve_pe(b"no pe here at all", tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# parse_address
+# ---------------------------------------------------------------------------
+
+def test_parse_address_accepted_forms():
+    assert parse_address(0x401000) == 0x401000
+    assert parse_address("0x401000") == 0x401000
+    assert parse_address("0X401000") == 0x401000
+    assert parse_address("  0x10  ") == 0x10
+    assert parse_address("4198400") == 4198400  # decimal
+    assert parse_address("deadBEEF") == 0xDEADBEEF  # bare hex
+
+
+def test_parse_address_rejects_garbage_as_debugger_error():
+    # Malformed input must surface as DebuggerError (caught by the
+    # server's guard() into a structured result), never a bare
+    # ValueError from int().
+    for bad in ("", "xyz", "0x", "0xzz", "module!symbol", "1.5", None):
+        with pytest.raises(DebuggerError, match="invalid address"):
+            parse_address(bad)
