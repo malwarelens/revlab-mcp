@@ -73,9 +73,17 @@ def parse_ghidra_output(data: dict) -> dict:
     Returns {function_count, functions, import_count, imports,
     suspicious_functions, string_hotspots}. Long lists are capped
     (with a *_truncated flag); decompiled snippets are truncated.
-    Defensive against schema variations: unexpected items are skipped.
+    Defensive against schema variations: unexpected items are skipped,
+    a non-dict document is treated as empty, non-list sections are
+    ignored, and a hotspot whose references count is not numeric sorts
+    as zero instead of crashing the sort (a string count would make
+    the unary minus raise TypeError).
     """
+    if not isinstance(data, dict):
+        data = {}
     functions_in = data.get("functions") or []
+    if not isinstance(functions_in, list):
+        functions_in = []
     functions = []
     for fn in functions_in:
         if not isinstance(fn, dict):
@@ -88,6 +96,8 @@ def parse_ghidra_output(data: dict) -> dict:
         })
 
     imports_in = data.get("imports") or []
+    if not isinstance(imports_in, list):
+        imports_in = []
     imports = []
     for imp in imports_in:
         if not isinstance(imp, dict):
@@ -98,22 +108,35 @@ def parse_ghidra_output(data: dict) -> dict:
             "address": imp.get("address"),
         })
 
+    suspicious_in = data.get("suspicious_calls") or []
+    if not isinstance(suspicious_in, list):
+        suspicious_in = []
     suspicious = []
-    for hit in data.get("suspicious_calls") or []:
+    for hit in suspicious_in:
         if not isinstance(hit, dict):
             continue
         snippet = hit.get("decompiled")
         if isinstance(snippet, str) and len(snippet) > MAX_SNIPPET_CHARS:
             snippet = snippet[:MAX_SNIPPET_CHARS] + "\n/* ... truncated ... */"
+        apis_in = hit.get("apis")
+        if isinstance(apis_in, str):
+            apis = [apis_in]
+        elif isinstance(apis_in, (list, tuple)):
+            apis = list(apis_in)
+        else:
+            apis = []
         suspicious.append({
             "function": hit.get("function"),
             "address": hit.get("address"),
-            "apis": list(hit.get("apis") or []),
+            "apis": apis,
             "decompiled": snippet,
         })
 
+    hotspots_in = data.get("string_hotspots") or []
+    if not isinstance(hotspots_in, list):
+        hotspots_in = []
     hotspots = []
-    for spot in data.get("string_hotspots") or []:
+    for spot in hotspots_in:
         if not isinstance(spot, dict):
             continue
         hotspots.append({
@@ -121,7 +144,14 @@ def parse_ghidra_output(data: dict) -> dict:
             "address": spot.get("address"),
             "references": spot.get("references"),
         })
-    hotspots.sort(key=lambda item: -(item.get("references") or 0))
+
+    def _hotspot_rank(item: dict) -> int | float:
+        refs = item.get("references")
+        if isinstance(refs, bool) or not isinstance(refs, (int, float)):
+            return 0
+        return -refs
+
+    hotspots.sort(key=_hotspot_rank)
 
     return {
         "program": data.get("program"),

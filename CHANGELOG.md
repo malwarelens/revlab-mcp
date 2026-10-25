@@ -8,6 +8,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Ghidra export parsing tolerates malformed documents** —
+  `parse_ghidra_output` claimed to be defensive against schema
+  variations but crashed on a non-dict document (a JSON list from a
+  broken export script), on non-list sections, and when a string
+  hotspot's `references` count hit the sort's unary minus
+  (`TypeError`), surfacing as an unhandled tool error instead of the
+  structured envelope. Non-dict documents are now treated as empty,
+  non-list sections are ignored, non-numeric hotspot counts sort as
+  zero, and a lone string `apis` value stays one entry instead of
+  being split into characters. Pinned by new malformed-document
+  tests in `tests/test_ghidra.py`.
+
 - **Malformed debugger addresses now return structured errors** —
   `debugger/base.py::parse_address` raised a bare `ValueError` on
   unparseable input (e.g. `debug_read_memory` with

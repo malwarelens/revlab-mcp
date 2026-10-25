@@ -113,6 +113,43 @@ def test_run_ghidra_no_output(monkeypatch, with_fake_ghidra, sample):
     assert "no export JSON" in result["error"]
 
 
+def test_parse_ghidra_output_tolerates_malformed_document():
+    # A non-dict export document (e.g. a JSON list from a broken
+    # export script) used to crash on data.get(); it is now empty.
+    summary = ghidra_tools.parse_ghidra_output([])
+    assert summary["function_count"] == 0
+    assert summary["functions"] == []
+    assert summary["string_hotspots"] == []
+    # Non-list sections are ignored rather than iterated as keys/chars.
+    summary = ghidra_tools.parse_ghidra_output({
+        "functions": "entry", "imports": {"KERNEL32": []},
+        "suspicious_calls": "VirtualAllocEx",
+        "string_hotspots": {"http://x": 4}})
+    assert summary["function_count"] == 0
+    assert summary["import_count"] == 0
+    assert summary["suspicious_count"] == 0
+    assert summary["string_hotspots"] == []
+
+
+def test_parse_ghidra_output_tolerates_non_numeric_hotspot_counts():
+    # A string references count used to crash the hotspot sort
+    # (unary minus on str); it now sorts as zero, after real counts,
+    # and a lone string apis value stays one entry, not split chars.
+    summary = ghidra_tools.parse_ghidra_output({
+        "functions": [], "imports": [],
+        "suspicious_calls": [{"function": "f", "address": "0x1",
+                              "apis": "VirtualAllocEx",
+                              "decompiled": ""}],
+        "string_hotspots": [
+            {"value": "weird", "address": "0x1", "references": "many"},
+            {"value": "hot", "address": "0x2", "references": 4},
+            {"value": "warm", "address": "0x3", "references": 2}]})
+    assert summary["suspicious_functions"][0]["apis"] == ["VirtualAllocEx"]
+    values = [h["value"] for h in summary["string_hotspots"]]
+    assert values == ["hot", "warm", "weird"]
+    assert summary["string_hotspots"][2]["references"] == "many"
+
+
 def test_parse_ghidra_output_truncation():
     many = [{"name": f"f{i}", "address": "0x1", "size": 1,
              "signature": "s"} for i in range(500)]
