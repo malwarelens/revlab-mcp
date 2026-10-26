@@ -8,6 +8,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **capa output parsing tolerates malformed documents** —
+  `parse_capa_output` claimed to be defensive against schema
+  variations but crashed on a non-dict document (a JSON list from a
+  broken capa build), on a non-dict rules section, and on a non-dict
+  rule or meta section (`AttributeError` / `TypeError` on `.get()` /
+  indexing), surfacing as an unhandled tool error instead of the
+  structured envelope. Non-dict documents and rules sections are
+  now treated as empty, and a non-dict rule or meta section is
+  treated as empty with the rule still counted under its key.
+  Pinned by a new malformed-document test in
+  `tests/test_capa.py`, mirroring the Ghidra hardening above.
+
 - **Ghidra export parsing tolerates malformed documents** —
   `parse_ghidra_output` claimed to be defensive against schema
   variations but crashed on a non-dict document (a JSON list from a

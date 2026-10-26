@@ -115,6 +115,30 @@ def test_run_capa_success(fake_capa):
 # parser robustness
 # ---------------------------------------------------------------------------
 
+def test_parse_capa_output_tolerates_malformed_document():
+    # A non-dict capa document (e.g. a JSON list from a broken capa
+    # build) used to crash on data.get(); it is now empty. A
+    # non-dict rules section is ignored, and a non-dict rule or meta
+    # section is treated as empty -- the rule still counts under its
+    # key -- instead of crashing on .get() / indexing. This mirrors
+    # the malformed-document hardening in parse_ghidra_output.
+    assert capa_tools.parse_capa_output([])["capability_count"] == 0
+    assert capa_tools.parse_capa_output("oops")["capability_count"] == 0
+    assert capa_tools.parse_capa_output(
+        {"rules": ["a", "b"]})["capability_count"] == 0
+    summary = capa_tools.parse_capa_output({
+        "rules": {
+            "string rule": "notadict",
+            "list meta": {"meta": ["x"], "matches": {}},
+        },
+    })
+    assert summary["capability_count"] == 2
+    assert {c["name"] for c in summary["capabilities"]} == \
+        {"string rule", "list meta"}
+    assert summary["by_attack_tactic"] == {}
+    assert summary["by_mbc_objective"] == {}
+
+
 def test_parse_capa_output_tolerates_gaps():
     summary = capa_tools.parse_capa_output({
         "rules": {

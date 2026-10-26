@@ -67,16 +67,28 @@ def parse_capa_output(data: dict) -> dict:
 
     Returns {capability_count, capabilities, by_attack_tactic,
     by_mbc_objective}. Defensive against schema variations across capa
-    versions: anything unexpected is skipped rather than fatal.
+    versions: anything unexpected is skipped rather than fatal. A
+    non-dict document is treated as empty, a non-dict rules section
+    is ignored, and a non-dict rule or meta section is treated as
+    empty (the rule still counts under its key, as the "broken" case
+    already did) instead of crashing on .get() / indexing.
     """
+    if not isinstance(data, dict):
+        data = {}
     rules = data.get("rules") or {}
+    if not isinstance(rules, dict):
+        rules = {}
     capabilities: list[dict] = []
     by_tactic: dict[str, list[str]] = {}
     by_objective: dict[str, list[str]] = {}
 
     for key in sorted(rules):
         rule = rules[key] or {}
+        if not isinstance(rule, dict):
+            rule = {}
         meta = rule.get("meta") or {}
+        if not isinstance(meta, dict):
+            meta = {}
         name = meta.get("name") or key
         attack = _clean_attack(meta.get("att&ck"))
         mbc = _clean_mbc(meta.get("mbc"))
