@@ -61,6 +61,34 @@ def test_collect_debug_activity_windows_and_filters(tmp_path):
     assert all(e["status"] == "ok" for e in events)
 
 
+def test_collect_debug_activity_skips_non_object_json_lines(tmp_path):
+    log = _write_log(tmp_path, [
+        _entry("2026-10-12T10:30:00+00:00"),
+        "[1, 2]",
+        '"just a string"',
+        "123",
+        "null",
+        "true",
+        _entry("2026-10-12T10:45:00+00:00", tool="debug_step"),
+    ])
+    events = collect_debug_activity(log, SINCE, UNTIL)
+    assert [e["tool"] for e in events] == ["debug_run", "debug_step"]
+
+
+def test_collect_debug_activity_keeps_non_string_timestamps(tmp_path):
+    # A timestamp that is not a string cannot be windowed out, so the
+    # entry is kept, like the unparseable-string case above -- and it
+    # must not crash _parse_ts (fromisoformat raises TypeError, not
+    # ValueError, on a non-str argument).
+    log = _write_log(tmp_path, [
+        json.dumps({"ts": 12345, "tool": "debug_run", "status": "ok"}),
+        json.dumps({"ts": ["2026-10-12T10:30:00+00:00"], "tool": "debug_step",
+                    "status": "ok"}),
+    ])
+    events = collect_debug_activity(log, SINCE, UNTIL)
+    assert [e["tool"] for e in events] == ["debug_run", "debug_step"]
+
+
 def test_collect_debug_activity_open_ended_window(tmp_path):
     log = _write_log(tmp_path, [
         _entry("2026-10-12T09:00:00+00:00"),

@@ -8,6 +8,20 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Audit-log collection tolerates malformed lines** —
+  `collect_debug_activity` claimed to skip malformed audit-log
+  lines but crashed on a line that is valid JSON yet not an
+  object (a list, string, number, `null`, ...) with
+  `AttributeError` on `.get()`, and `_parse_ts` crashed with
+  `TypeError` on a non-string `ts` value (`fromisoformat` raises
+  `TypeError`, not `ValueError`, for a non-str argument) instead
+  of treating it as unparseable. Non-object lines are now skipped
+  and non-string timestamps are treated as unparseable (so the
+  entry is kept, as unparseable-string timestamps already were),
+  so a corrupt audit-log line can no longer break session report
+  composition. Pinned by new tests in
+  `tests/test_report_collectors.py`.
+
 - **capa output parsing tolerates malformed documents** —
   `parse_capa_output` claimed to be defensive against schema
   variations but crashed on a non-dict document (a JSON list from a

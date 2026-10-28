@@ -28,7 +28,7 @@ def _now() -> str:
 
 
 def _parse_ts(value: str | None) -> datetime | None:
-    if not value:
+    if not isinstance(value, str) or not value:
         return None
     try:
         return datetime.fromisoformat(value)
@@ -61,6 +61,8 @@ def collect_debug_activity(audit_log_path, since: str | None,
         try:
             entry = json.loads(line)
         except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
             continue
         if not str(entry.get("tool", "")).startswith("debug_"):
             continue
