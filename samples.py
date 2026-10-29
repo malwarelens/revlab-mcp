@@ -68,7 +68,12 @@ class SampleStore:
             # Valid JSON with the wrong top-level shape (a list, a
             # number, null, ...) is just as corrupt as unparseable
             # JSON: recover empty instead of crashing on .values().
-            return data if isinstance(data, dict) else {}
+            if not isinstance(data, dict):
+                return {}
+            # A corrupt entry inside an otherwise valid object is no
+            # better: dict(<non-dict>) in list_samples()/get_info()
+            # would crash, so drop non-dict entries and keep the rest.
+            return {k: v for k, v in data.items() if isinstance(v, dict)}
         return {}
 
     def _save(self) -> None:

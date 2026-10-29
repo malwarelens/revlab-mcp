@@ -52,6 +52,47 @@ def test_session_manager_recovers_from_bad_state(tmp_path, payload):
     assert SessionManager(state).get(s["session_id"])["sample_id"] == "c" * 64
 
 
+@pytest.mark.parametrize("bad_entry", ['"text"', "123", "null", "true", '["x"]'])
+def test_sample_store_drops_non_dict_entries(tmp_path, bad_entry):
+    # Top level is a valid object, but one entry is not: previously
+    # list_samples() crashed on dict(<non-dict>) instead of recovering.
+    root = tmp_path / "store"
+    root.mkdir()
+    good_id = "a" * 64
+    payload = (
+        "{" + f'"{good_id}": {{"sample_id": "{good_id}"}}, '
+        f'"{"b" * 64}": {bad_entry}' + "}"
+    )
+    (root / "index.json").write_text(payload, encoding="utf-8")
+    store = SampleStore(root)
+    listed = store.list_samples()
+    assert [m["sample_id"] for m in listed] == [good_id]
+    assert store.get_info(good_id)["sample_id"] == good_id
+    # Still usable: registering overwrites the file cleanly.
+    src = tmp_path / "drop.bin"
+    src.write_bytes(b"hello revlab")
+    meta = store.register(str(src))
+    assert SampleStore(root).get_info(meta["sample_id"])["sha256"] == meta["sha256"]
+
+
+@pytest.mark.parametrize("bad_entry", ['"text"', "123", "null", "true", '["x"]'])
+def test_session_manager_drops_non_dict_entries(tmp_path, bad_entry):
+    state = tmp_path / "sessions.json"
+    payload = (
+        '{"good": {"session_id": "good", "status": "open", '
+        '"frida_sessions": [], "notes": []}, '
+        f'"bad": {bad_entry}' + "}"
+    )
+    state.write_text(payload, encoding="utf-8")
+    mgr = SessionManager(state)
+    listed = mgr.list_sessions()
+    assert [s["session_id"] for s in listed] == ["good"]
+    assert mgr.get("good")["status"] == "open"
+    # Still usable: creating overwrites the file cleanly.
+    s = mgr.create()
+    assert SessionManager(state).get(s["session_id"])["status"] == "open"
+
+
 def test_valid_object_state_is_kept(tmp_path):
     # A well-formed object must load untouched (no over-eager reset).
     root = tmp_path / "store"

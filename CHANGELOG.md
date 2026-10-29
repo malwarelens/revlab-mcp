@@ -8,6 +8,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **State recovery drops corrupt entries inside a valid object** —
+  `SampleStore` and `SessionManager` recovered only when the
+  whole state file was unparseable or a non-object; a valid
+  object containing a non-dict entry (a string, number, `null`,
+  list, ...) still crashed the first `list_samples()` /
+  `list_sessions()` call (`ValueError` / `TypeError` on
+  `dict(<non-dict>)`). Both loaders now drop non-dict entries
+  and keep the valid ones, so a partially corrupt state file no
+  longer blocks the store, and the next write replaces it
+  cleanly. Pinned by new tests in
+  `tests/test_state_recovery.py`.
+
 - **Audit-log collection tolerates malformed lines** —
   `collect_debug_activity` claimed to skip malformed audit-log
   lines but crashed on a line that is valid JSON yet not an
