@@ -8,6 +8,17 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Corrupt triage cache no longer fails static analysis** —
+  `run_triage` returned its per-sample cache file verbatim, so a
+  partial write from a killed triage run (unparseable JSON) crashed
+  `static_triage` with an unhandled tool error, and valid JSON of
+  the wrong shape (a list, ...) crashed `get_strings_summary` on
+  `triage.get`. Unparseable or non-dict caches are now ignored and
+  the triage is recomputed, overwriting the bad file; valid dict
+  caches are still served as before. Pinned by new tests in
+  `tests/test_triage_cache.py` (partial JSON, wrong-shape JSON,
+  cache-hit preserved), calling the real tools in-process.
+
 - **State recovery drops corrupt entries inside a valid object** —
   `SampleStore` and `SessionManager` recovered only when the
   whole state file was unparseable or a non-object; a valid

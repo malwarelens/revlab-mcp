@@ -185,7 +185,15 @@ def build_server(cfg: Config) -> FastMCP:
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_file = cache_dir / f"{sample_id}.json"
         if cache_file.is_file():
-            return json.loads(cache_file.read_text(encoding="utf-8"))
+            try:
+                cached = json.loads(cache_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                cached = None
+            if isinstance(cached, dict):
+                return cached
+            # A corrupt cache (partial write from a killed triage run)
+            # or valid JSON of the wrong shape must not fail the tool:
+            # fall through and recompute, overwriting the bad file.
         proc = subprocess.run(
             [sys.executable, str(TRIAGE_SCRIPT), str(path),
              "--json", str(cache_file)],
