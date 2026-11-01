@@ -127,6 +127,20 @@ def collect_artifacts(artifacts_dir) -> dict:
 # Rendering
 # ---------------------------------------------------------------------------
 
+def _as_dict(value) -> dict:
+    """A triage field that must be an object: anything else is malformed
+    and renders as empty, mirroring how the parsers treat wrong-shaped
+    documents instead of crashing on .get()."""
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value) -> list:
+    """A triage field that must be a list: anything else (a string would
+    otherwise render character by character, an int would crash len())
+    renders as empty."""
+    return value if isinstance(value, list) else []
+
+
 def _fmt_iocs(iocs: dict) -> tuple[list[str], int]:
     lines: list[str] = []
     total = 0
@@ -134,8 +148,8 @@ def _fmt_iocs(iocs: dict) -> tuple[list[str], int]:
               "emails": "Emails", "run_keys": "Registry Run keys",
               "file_paths": "File paths"}
     for key, label in labels.items():
-        values = iocs.get(key) or []
-        if not values:
+        values = iocs.get(key)
+        if not isinstance(values, list) or not values:
             continue
         total += len(values)
         lines.append(f"- **{label}** ({len(values)}):")
@@ -149,18 +163,29 @@ def _render_triage(triage: dict | None, triage_error: str | None) -> tuple[list[
         note = f"Static triage failed for this sample: {triage_error}" if triage_error \
             else "Static triage has not been run for this session's sample."
         return ["## Static triage", "", note, ""], counts
+    if not isinstance(triage, dict):
+        # run_triage serves a cached dict verbatim once its top level is
+        # a dict, but nothing guards the nested fields: a hand-edited or
+        # partially written cache can carry a list where the renderer
+        # expects an object (hashes / pe / iocs / yara) or a scalar where
+        # it expects a list (sections / indicators). Those used to crash
+        # report composition with AttributeError / TypeError; render the
+        # well-shaped fields and drop the malformed ones instead.
+        return ["## Static triage", "",
+                "Static triage result was malformed and could not be rendered.",
+                ""], counts
 
     lines = ["## Static triage", ""]
     lines.append(f"- File type: {triage.get('file_type')}")
     lines.append(f"- Size: {triage.get('size')} bytes; "
                  f"overall entropy: {triage.get('entropy')}")
-    hashes = triage.get("hashes") or {}
+    hashes = _as_dict(triage.get("hashes"))
     if hashes:
         lines.append(f"- MD5: `{hashes.get('md5')}`")
         lines.append(f"- SHA-1: `{hashes.get('sha1')}`")
         lines.append(f"- SHA-256: `{hashes.get('sha256')}`")
 
-    pe = triage.get("pe") or {}
+    pe = _as_dict(triage.get("pe"))
     if pe.get("is_pe"):
         lines += ["", "### PE structure", "",
                   f"- Machine: {pe.get('machine')}; subsystem: {pe.get('subsystem')}; "
@@ -169,16 +194,18 @@ def _render_triage(triage: dict | None, triage_error: str | None) -> tuple[list[
                   f"overlay: {pe.get('overlay_size')} bytes",
                   "", "| Section | VirtSize | RawSize | Entropy | Flags |",
                   "|---|---|---|---|---|"]
-        for section in pe.get("sections") or []:
+        for section in _as_list(pe.get("sections")):
+            if not isinstance(section, dict):
+                continue
             lines.append(f"| {section.get('name')} | {section.get('virtual_size')} "
                          f"| {section.get('raw_size')} | {section.get('entropy')} "
                          f"| {section.get('flags')} |")
-        imports = pe.get("imported_functions") or []
+        imports = _as_list(pe.get("imported_functions"))
         if imports:
             lines += ["", f"Imported functions ({len(imports)}): "
                       + ", ".join(f"`{fn}`" for fn in imports[:40])]
 
-    ioc_lines, ioc_total = _fmt_iocs(triage.get("iocs") or {})
+    ioc_lines, ioc_total = _fmt_iocs(_as_dict(triage.get("iocs")))
     counts["iocs"] = ioc_total
     lines += ["", "### IOCs", ""]
     lines += ioc_lines if ioc_lines else ["No IOCs extracted from strings."]
@@ -193,14 +220,14 @@ def _render_triage(triage: dict | None, triage_error: str | None) -> tuple[list[
         elif isinstance(apis, list):
             lines.extend(f"- `{name}`" for name in apis)
 
-    indicators = triage.get("indicators") or []
+    indicators = _as_list(triage.get("indicators"))
     counts["indicators"] = len(indicators)
     if indicators:
         lines += ["", "### Triage indicators", ""]
         lines.extend(f"- {note}" for note in indicators)
 
-    yara = triage.get("yara") or {}
-    matches = yara.get("matches") or []
+    yara = _as_dict(triage.get("yara"))
+    matches = _as_list(yara.get("matches"))
     if matches:
         lines += ["", "### YARA matches", ""]
         lines.extend(f"- `{m}`" for m in matches)

@@ -1,4 +1,4 @@
-"""Direct tests for report.py's two collectors.
+"""Direct tests for report.py's two collectors and its triage renderer.
 
 test_report.py exercises compose_session_report end to end; these
 tests pin the collectors' own contracts:
@@ -9,7 +9,12 @@ tests pin the collectors' own contracts:
 * collect_artifacts buckets pe-sieve runs / dumps / carved PEs,
   ignores stray files and subdirectories where they do not belong,
   and labels a carved file's stem as its SHA-256 only when the stem
-  really is 64 lowercase hex characters.
+  really is 64 lowercase hex characters;
+* _render_triage renders well-shaped fields and drops malformed ones
+  instead of crashing: a cached triage dict is served verbatim once
+  its top level is a dict, so a wrong-shaped nested field (a list
+  where an object is expected, a scalar where a list is expected)
+  must not break report composition.
 """
 
 from __future__ import annotations
@@ -21,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from report import collect_artifacts, collect_debug_activity  # noqa: E402
+from report import _render_triage, collect_artifacts, collect_debug_activity  # noqa: E402
 
 SINCE = "2026-10-12T10:00:00+00:00"
 UNTIL = "2026-10-12T11:00:00+00:00"
@@ -142,3 +147,48 @@ def test_collect_artifacts_carved_stem_must_be_hex(tmp_path):
     (carved_dir / ("A" * 64 + ".bin")).write_bytes(b"MZ")  # uppercase hex
     out = collect_artifacts(tmp_path / "artifacts")
     assert [c["sha256"] for c in out["carved"]] == [None, None]
+
+
+# ---------------------------------------------------------------------------
+# _render_triage with wrong-shaped fields
+# ---------------------------------------------------------------------------
+
+def test_render_triage_drops_wrong_shaped_fields():
+    """Every field the renderer used to .get() / len() blindly, given a
+    wrong-shaped value, must render without crashing (previously
+    AttributeError / TypeError) and must not render a bare string IOC
+    or indicator character by character."""
+    malformed = {
+        "hashes": ["not", "a", "dict"],
+        "pe": "not-a-dict",
+        "iocs": {"urls": "http://example.com", "ipv4": 42},
+        "indicators": "packed",
+        "yara": ["rule1"],
+    }
+    lines, counts = _render_triage(malformed, None)
+    text = "\n".join(lines)
+    assert "## Static triage" in text
+    assert counts == {"iocs": 0, "indicators": 0}
+    # The string IOC must not have been split into single characters.
+    assert "http://example.com" not in text
+    assert "No IOCs extracted from strings." in text
+
+    # A non-dict section inside an otherwise valid PE block is skipped
+    # while the valid section still renders.
+    lines, _ = _render_triage({
+        "pe": {"is_pe": True,
+               "sections": ["MZ",
+                            {"name": ".text", "virtual_size": 1,
+                             "raw_size": 2, "entropy": 3.0,
+                             "flags": "r-x"}],
+               "imported_functions": "CreateFileW"},
+    }, None)
+    text = "\n".join(lines)
+    assert ".text" in text
+    assert "Imported functions" not in text  # scalar imports are dropped
+
+
+def test_render_triage_non_dict_result():
+    lines, counts = _render_triage(["not", "a", "dict"], None)
+    assert "malformed" in "\n".join(lines)
+    assert counts == {"iocs": 0, "indicators": 0}

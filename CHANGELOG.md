@@ -8,6 +8,19 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Session report tolerates wrong-shaped triage fields** —
+  `run_triage` serves a cached result verbatim once its top level
+  is a dict, but `_render_triage` then called `.get()` / `len()` on
+  the nested fields blindly, so a list where an object was expected
+  (`hashes` / `pe` / `iocs` / `yara`), a scalar where a list was
+  expected (`sections` entries, `imported_functions`,
+  `indicators`, an IOC value), or a non-dict triage itself crashed
+  report composition with `AttributeError` / `TypeError` — and a
+  bare-string IOC value rendered character by character. Wrong-shaped
+  fields are now dropped (well-shaped fields still render) and a
+  non-dict triage renders a malformed-result note. Pinned by new
+  tests in `tests/test_report_collectors.py`.
+
 - **Corrupt triage cache no longer fails static analysis** —
   `run_triage` returned its per-sample cache file verbatim, so a
   partial write from a killed triage run (unparseable JSON) crashed
