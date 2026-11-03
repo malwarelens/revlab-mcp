@@ -8,6 +8,17 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Session report tolerates wrong-shaped Frida and notes fields** —
+  a string `frida_sessions` rendered one bogus section per
+  character, a non-dict Frida result or a non-list `events` field
+  crashed report composition on `.get()`, a non-dict event in the
+  list crashed the same way, and a string `notes` field (or a
+  non-dict note entry) crashed on `str.get()`. Wrong-shaped
+  Frida fields now render as unavailable / empty and malformed
+  notes are dropped, while well-shaped sessions still render
+  fully. Pinned by new tests in
+  `tests/test_report_collectors.py`.
+
 - **Session report tolerates wrong-shaped triage fields** —
   `run_triage` serves a cached result verbatim once its top level
   is a dict, but `_render_triage` then called `.get()` / `len()` on

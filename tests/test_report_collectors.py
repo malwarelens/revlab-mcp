@@ -26,7 +26,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from report import _render_triage, collect_artifacts, collect_debug_activity  # noqa: E402
+from report import (  # noqa: E402
+    _render_frida,
+    _render_triage,
+    collect_artifacts,
+    collect_debug_activity,
+    compose_session_report,
+)
 
 SINCE = "2026-10-12T10:00:00+00:00"
 UNTIL = "2026-10-12T11:00:00+00:00"
@@ -192,3 +198,84 @@ def test_render_triage_non_dict_result():
     lines, counts = _render_triage(["not", "a", "dict"], None)
     assert "malformed" in "\n".join(lines)
     assert counts == {"iocs": 0, "indicators": 0}
+
+
+# ---------------------------------------------------------------------------
+# _render_frida and analyst notes with wrong-shaped session fields
+# ---------------------------------------------------------------------------
+
+def test_render_frida_drops_wrong_shaped_fields():
+    """A string frida_sessions used to render one bogus section per
+    character; a non-dict result or a non-list events field crashed
+    on .get(); a non-dict event inside the list crashed the same way.
+    All of these must render without crashing, dropping only the
+    malformed part, while a well-shaped session still renders."""
+    lines, total = _render_frida(
+        {"frida_sessions": "frida-1"},
+        {"frida-1": {"ok": True, "events": [], "total_buffered": 0}})
+    text = "\n".join(lines)
+    assert "### `f`" not in text
+    assert "No Frida session was attached" in text
+    assert total == 0
+
+    lines, total = _render_frida(
+        {"frida_sessions": ["frida-1"]}, "not-a-dict")
+    assert "could not be retrieved" in "\n".join(lines)
+    assert total == 0
+
+    lines, total = _render_frida(
+        {"frida_sessions": ["frida-1"]},
+        {"frida-1": "not-a-dict"})
+    assert "could not be retrieved" in "\n".join(lines)
+    assert total == 0
+
+    lines, total = _render_frida(
+        {"frida_sessions": ["frida-1"]},
+        {"frida-1": {"ok": True, "events": "abc", "total_buffered": 3}})
+    assert total == 0
+
+    lines, total = _render_frida(
+        {"frida_sessions": ["frida-1"]},
+        {"frida-1": {"ok": True, "events": [
+            "not-an-event", 42,
+            {"ts": "2026-10-12T00:00:01+00:00", "type": "send",
+             "payload": {"api": "CreateFileW"}}],
+         "total_buffered": 3}})
+    text = "\n".join(lines)
+    assert total == 1
+    assert "CreateFileW" in text
+
+
+class _StubSessions:
+    def __init__(self, session):
+        self._session = session
+
+    def get(self, session_id):
+        assert session_id == self._session["session_id"]
+        return dict(self._session)
+
+
+def test_compose_report_drops_wrong_shaped_notes(tmp_path):
+    """A string notes field used to crash compose on str.get(), and a
+    non-dict entry in the list crashed it the same way; the valid
+    note must still render and be counted."""
+    session = {"session_id": "s1", "status": "open",
+               "created_at": "2026-10-12T10:00:00+00:00",
+               "closed_at": None, "notes": "packed"}
+    result = compose_session_report(
+        "s1", sessions=_StubSessions(session),
+        artifacts_dir=tmp_path / "artifacts")
+    text = (tmp_path / "artifacts" / "reports" / "s1.md").read_text(
+        encoding="utf-8")
+    assert "No notes were recorded" in text
+    assert result["summary"]["notes"] == 0
+
+    session["notes"] = [{"ts": "2026-10-12T10:01:00+00:00",
+                         "note": "real note"}, "oops", 42]
+    result = compose_session_report(
+        "s1", sessions=_StubSessions(session),
+        artifacts_dir=tmp_path / "artifacts")
+    text = (tmp_path / "artifacts" / "reports" / "s1.md").read_text(
+        encoding="utf-8")
+    assert "real note" in text
+    assert result["summary"]["notes"] == 1

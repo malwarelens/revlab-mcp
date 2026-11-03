@@ -263,22 +263,28 @@ def _render_debug(session: dict, events: list[dict]) -> list[str]:
 
 def _render_frida(session: dict, frida_events: dict | None) -> tuple[list[str], int]:
     lines = ["## Frida events", ""]
-    attached = session.get("frida_sessions") or []
+    # Like _render_triage's fields, a session's frida_sessions comes
+    # from persisted state that can be hand-edited: a string here
+    # used to render one bogus section per character, and a non-dict
+    # result or a non-list events field crashed on .get() below.
+    attached = _as_list(session.get("frida_sessions"))
     if not attached:
         lines += ["No Frida session was attached to this analysis session.", ""]
         return lines, 0
+    events_by_id = frida_events if isinstance(frida_events, dict) else {}
     total = 0
     for frida_id in attached:
-        result = (frida_events or {}).get(frida_id)
+        result = events_by_id.get(frida_id)
         lines.append(f"### `{frida_id}`")
         lines.append("")
-        if result is None:
+        if not isinstance(result, dict):
             lines += ["Events could not be retrieved (server restarted?).", ""]
             continue
         if not result.get("ok"):
             lines += [f"No events available: {result.get('error', 'unavailable')}", ""]
             continue
-        events = result.get("events") or []
+        events = [e for e in _as_list(result.get("events"))
+                  if isinstance(e, dict)]
         total += len(events)
         lines.append(f"{len(events)} event(s) buffered"
                      f" (total buffered: {result.get('total_buffered')}).")
@@ -384,7 +390,11 @@ def compose_session_report(session_id: str, *, sessions, store=None,
     lines += _render_artifacts(artifacts)
 
     lines += ["## Analyst notes", ""]
-    notes = session.get("notes") or []
+    # Same wrong-shape guard as _render_frida above: a string notes
+    # field used to crash on str.get() (its characters are not notes),
+    # and a non-dict entry in the list crashed the same way.
+    notes = [n for n in _as_list(session.get("notes"))
+             if isinstance(n, dict)]
     if notes:
         lines.extend(f"- `{n.get('ts')}` {n.get('note')}" for n in notes)
     else:
