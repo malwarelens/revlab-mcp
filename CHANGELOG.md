@@ -8,6 +8,16 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Session report tolerates wrong-shaped debug events and args** —
+  `_render_debug` called `.get()` on every event and `.replace()`
+  on its `args` field, so a non-dict event crashed with
+  `AttributeError` and a hand-edited audit-log line carrying a
+  non-string `args` (a dict, an int, ...) crashed the same way,
+  breaking report composition. Non-dict events are now dropped
+  and non-string args are rendered as JSON / text, while
+  well-shaped events still render. Pinned by new tests in
+  `tests/test_report_collectors.py`.
+
 - **Session report tolerates wrong-shaped Frida and notes fields** —
   a string `frida_sessions` rendered one bogus section per
   character, a non-dict Frida result or a non-list `events` field

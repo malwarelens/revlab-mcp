@@ -249,7 +249,22 @@ def _render_debug(session: dict, events: list[dict]) -> list[str]:
     lines += ["", "| Time (UTC) | Tool | Status | Arguments |",
               "|---|---|---|---|"]
     for event in events[:_MAX_DEBUG_RENDERED]:
-        args = (event.get("args") or "").replace("|", "\\|")
+        # Same wrong-shape guard as _render_frida above: the audit
+        # log is hand-editable, so a line can carry a non-string
+        # args field (a dict, an int, ...) that used to crash on
+        # .replace() below, and a caller can pass a non-dict event
+        # that crashed on .get(). Render the well-shaped events and
+        # drop / coerce the malformed part instead.
+        if not isinstance(event, dict):
+            continue
+        raw_args = event.get("args")
+        if raw_args is None:
+            args = ""
+        elif isinstance(raw_args, str):
+            args = raw_args
+        else:
+            args = json.dumps(raw_args, ensure_ascii=False, default=str)
+        args = args.replace("|", "\\|")
         if len(args) > 120:
             args = args[:120] + "…"
         lines.append(f"| {event.get('ts')} | `{event.get('tool')}` "

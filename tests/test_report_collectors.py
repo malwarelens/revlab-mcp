@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from report import (  # noqa: E402
+    _render_debug,
     _render_frida,
     _render_triage,
     collect_artifacts,
@@ -279,3 +280,51 @@ def test_compose_report_drops_wrong_shaped_notes(tmp_path):
         encoding="utf-8")
     assert "real note" in text
     assert result["summary"]["notes"] == 1
+
+
+# ---------------------------------------------------------------------------
+# _render_debug with wrong-shaped events / args
+# ---------------------------------------------------------------------------
+
+def test_render_debug_drops_wrong_shaped_events_and_coerces_args(tmp_path):
+    """A non-dict event used to crash _render_debug on .get(), and a
+    hand-edited audit-log line can carry a non-string args field
+    (a dict, an int) that crashed on .replace(). Malformed events are
+    dropped and non-string args are rendered as JSON / text, while a
+    well-shaped event still renders."""
+    lines = _render_debug(
+        {"debugger_bridge_session": "bridge-1"},
+        ["not-an-event", 42,
+         {"ts": "2026-10-12T10:30:00+00:00", "tool": "debug_run",
+          "status": "ok", "args": {"address": "0x1000"}},
+         {"ts": "2026-10-12T10:31:00+00:00", "tool": "debug_step",
+          "status": "ok", "args": 42},
+         {"ts": "2026-10-12T10:32:00+00:00", "tool": "debug_read",
+          "status": "ok", "args": None}])
+    text = "\n".join(lines)
+    assert "bridge-1" in text
+    assert "debug_run" in text and "debug_step" in text and "debug_read" in text
+    assert "0x1000" in text
+    assert "| 42 |" in text
+
+
+def test_compose_report_renders_non_string_audit_args(tmp_path):
+    """End to end: an audit-log line whose args is a dict (not the
+    string the AuditLog writer produces) must not break report
+    composition."""
+    log = _write_log(tmp_path, [
+        json.dumps({"ts": "2026-10-12T10:30:00+00:00", "tool": "debug_run",
+                    "status": "ok", "args": {"address": "0x1000"}}),
+    ])
+    session = {"session_id": "s2", "status": "open",
+               "created_at": "2026-10-12T10:00:00+00:00",
+               "closed_at": "2026-10-12T11:00:00+00:00",
+               "notes": []}
+    result = compose_session_report(
+        "s2", sessions=_StubSessions(session),
+        artifacts_dir=tmp_path / "artifacts", audit_log_path=log)
+    text = (tmp_path / "artifacts" / "reports" / "s2.md").read_text(
+        encoding="utf-8")
+    assert "debug_run" in text
+    assert "0x1000" in text
+    assert result["summary"]["debug_events"] == 1
