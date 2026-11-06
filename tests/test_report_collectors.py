@@ -247,6 +247,29 @@ def test_render_frida_drops_wrong_shaped_fields():
     assert "CreateFileW" in text
 
 
+def test_render_frida_drops_non_string_ids():
+    """A frida_sessions entry that is not a string (a dict, a list,
+    an int) used to crash _render_frida on events_by_id.get() with
+    TypeError (unhashable key). Malformed ids are dropped while the
+    well-shaped sessions still render."""
+    events = {
+        "frida-1": {"ok": True, "events": [
+            {"ts": "2026-10-12T00:00:01+00:00", "type": "send",
+             "payload": {"api": "CreateFileW"}}],
+         "total_buffered": 1},
+        "frida-2": {"ok": False, "error": "server restarted"},
+    }
+    lines, total = _render_frida(
+        {"frida_sessions": ["frida-1", {"id": 1}, ["x"], 42, "frida-2"]},
+        events)
+    text = "\n".join(lines)
+    assert total == 1
+    assert "### `frida-1`" in text
+    assert "### `frida-2`" in text
+    assert "CreateFileW" in text
+    assert "server restarted" in text
+
+
 class _StubSessions:
     def __init__(self, session):
         self._session = session
@@ -280,6 +303,33 @@ def test_compose_report_drops_wrong_shaped_notes(tmp_path):
         encoding="utf-8")
     assert "real note" in text
     assert result["summary"]["notes"] == 1
+
+
+def test_compose_report_drops_non_string_frida_ids(tmp_path):
+    """End to end: a hand-edited session whose frida_sessions carry
+    a dict / list / int id must not break report composition (the
+    renderer used to crash on the unhashable key); the well-shaped
+    id still renders and is counted."""
+    session = {"session_id": "s1b", "status": "open",
+               "created_at": "2026-10-12T10:00:00+00:00",
+               "closed_at": None,
+               "frida_sessions": ["frida-1", {"id": 1}, ["x"], 42],
+               "notes": []}
+    frida_events = {
+        "frida-1": {"ok": True, "events": [
+            {"ts": "2026-10-12T00:00:01+00:00", "type": "send",
+             "payload": {"api": "CreateFileW"}}],
+         "total_buffered": 1},
+    }
+    result = compose_session_report(
+        "s1b", sessions=_StubSessions(session),
+        frida_events=frida_events,
+        artifacts_dir=tmp_path / "artifacts")
+    text = (tmp_path / "artifacts" / "reports" / "s1b.md").read_text(
+        encoding="utf-8")
+    assert "### `frida-1`" in text
+    assert "CreateFileW" in text
+    assert result["summary"]["frida_events"] == 1
 
 
 # ---------------------------------------------------------------------------

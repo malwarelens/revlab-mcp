@@ -8,6 +8,16 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Session report tolerates non-string Frida session ids** —
+  `_render_frida` called `events_by_id.get()` on every id in
+  `frida_sessions`, so a hand-edited session state carrying a dict
+  or list id crashed report composition with `TypeError`
+  (unhashable key), and the `compose_session_report` tool crashed
+  the same way on the dict-key assignment while collecting events.
+  Non-string ids are now dropped in both places, while well-shaped
+  ids still render. Pinned by new tests in
+  `tests/test_report_collectors.py` and `tests/test_report.py`.
+
 - **Session report tolerates wrong-shaped debug events and args** —
   `_render_debug` called `.get()` on every event and `.replace()`
   on its `args` field, so a non-dict event crashed with

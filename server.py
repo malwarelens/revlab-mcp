@@ -655,7 +655,17 @@ def build_server(cfg: Config) -> FastMCP:
             except Exception as exc:  # noqa: BLE001 - report notes the failure
                 triage_error = f"{type(exc).__name__}: {exc}"
         frida_events = {}
-        for frida_id in session.get("frida_sessions") or []:
+        # Same wrong-shape guard as report._render_frida: the session
+        # state is hand-editable, so frida_sessions can carry a dict
+        # or list entry (or be a bare string), which used to crash
+        # the dict-key assignment below with TypeError (unhashable).
+        # Collect events only for string ids.
+        frida_ids = session.get("frida_sessions")
+        if not isinstance(frida_ids, list):
+            frida_ids = []
+        for frida_id in frida_ids:
+            if not isinstance(frida_id, str):
+                continue
             try:
                 frida_events[frida_id] = frida_mgr.get_events(frida_id)
             except Exception as exc:  # noqa: BLE001 - e.g. server restarted

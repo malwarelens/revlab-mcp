@@ -7,6 +7,7 @@ sample plus planted audit-log lines and artifact files -- the same
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 import sys
@@ -21,7 +22,9 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import make_samples  # noqa: E402
 import report as report_mod  # noqa: E402
+from config import Config  # noqa: E402
 from samples import SampleStore  # noqa: E402
+from server import build_server  # noqa: E402
 from sessions import SessionManager  # noqa: E402
 
 
@@ -169,3 +172,39 @@ def test_collect_debug_activity_missing_log(tmp_path):
     assert report_mod.collect_debug_activity(
         tmp_path / "absent.jsonl",
         datetime.now(timezone.utc).isoformat()) == []
+
+
+def _call(mcp, name, **kwargs):
+    async def _run():
+        res = await mcp.call_tool(name, kwargs)
+        assert res and res[0].text, f"{name} returned no content"
+        return json.loads(res[0].text)
+
+    return asyncio.run(_run())
+
+
+def test_compose_report_tool_drops_non_string_frida_ids(tmp_path):
+    """Server half of the same guard: the compose_session_report tool
+    collects Frida events per id before rendering, and a hand-edited
+    session state carrying a dict / list / int id used to crash that
+    loop on the dict-key assignment (TypeError: unhashable). The
+    tool must return ok and render only the well-shaped id."""
+    cfg = Config(samples_dir=tmp_path / "samples",
+                 artifacts_dir=tmp_path / "artifacts")
+    mcp = build_server(cfg)
+    created = _call(mcp, "session_create")
+    sid = created["session_id"]
+    # Hand-edit the persisted state, as a hand-edited sessions.json
+    # would: one good id plus dict / list / int ids.
+    state_path = tmp_path / "artifacts" / "sessions.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state[sid]["frida_sessions"] = ["frida-1", {"id": 1}, ["x"], 42]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    # Rebuild so the fresh SessionManager loads the edited state.
+    mcp = build_server(cfg)
+    result = _call(mcp, "compose_session_report", session_id=sid)
+    assert result["ok"] is True
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert "### `frida-1`" in text
+    assert "### `{" not in text
+    assert result["summary"]["frida_events"] == 0

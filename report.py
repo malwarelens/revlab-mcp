@@ -281,8 +281,12 @@ def _render_frida(session: dict, frida_events: dict | None) -> tuple[list[str], 
     # Like _render_triage's fields, a session's frida_sessions comes
     # from persisted state that can be hand-edited: a string here
     # used to render one bogus section per character, and a non-dict
-    # result or a non-list events field crashed on .get() below.
-    attached = _as_list(session.get("frida_sessions"))
+    # result or a non-list events field crashed on .get() below. A
+    # non-string id (a dict, a list, ...) would crash the same way on
+    # events_by_id.get(), which needs a hashable key -- drop those
+    # ids and render the well-shaped ones.
+    attached = [f for f in _as_list(session.get("frida_sessions"))
+                if isinstance(f, str)]
     if not attached:
         lines += ["No Frida session was attached to this analysis session.", ""]
         return lines, 0
