@@ -275,7 +275,8 @@ class _StubSessions:
         self._session = session
 
     def get(self, session_id):
-        assert session_id == self._session["session_id"]
+        if "session_id" in self._session:
+            assert session_id == self._session["session_id"]
         return dict(self._session)
 
 
@@ -330,6 +331,23 @@ def test_compose_report_drops_non_string_frida_ids(tmp_path):
     assert "### `frida-1`" in text
     assert "CreateFileW" in text
     assert result["summary"]["frida_events"] == 1
+
+
+def test_compose_report_tolerates_missing_session_header_keys(tmp_path):
+    """A hand-edited session missing the top-level keys the report
+    header reads (session_id / status / created_at / sample_id) used
+    to crash compose_session_report with KeyError; the report must
+    still render, falling back to the requested id and placeholders."""
+    session = {"frida_sessions": [], "notes": []}
+    result = compose_session_report(
+        "s3", sessions=_StubSessions(session),
+        artifacts_dir=tmp_path / "artifacts")
+    text = (tmp_path / "artifacts" / "reports" / "s3.md").read_text(
+        encoding="utf-8")
+    assert "- Session: `s3` (status: unknown, created: —, closed: —)" in text
+    assert "No sample was bound to this session." in text
+    assert result["session_id"] == "s3"
+    assert result["sample_id"] is None
 
 
 # ---------------------------------------------------------------------------

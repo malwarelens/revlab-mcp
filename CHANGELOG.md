@@ -8,6 +8,15 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Session report tolerates a session missing its header keys** —
+  `compose_session_report` read `session['session_id']` /
+  `['status']` / `['created_at']` directly, so a hand-edited
+  sessions.json missing any of them crashed report composition
+  with `KeyError`. The header now falls back to the requested
+  session id, `unknown` status and `—` timestamps, and the
+  report file and returned `session_id` use the requested id.
+  Pinned by a new test in `tests/test_report_collectors.py`.
+
 - **Session report tolerates non-string Frida session ids** —
   `_render_frida` called `events_by_id.get()` on every id in
   `frida_sessions`, so a hand-edited session state carrying a dict

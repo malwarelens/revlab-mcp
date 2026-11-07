@@ -380,9 +380,15 @@ def compose_session_report(session_id: str, *, sessions, store=None,
     artifacts = collect_artifacts(artifacts_root)
 
     lines = ["# Analysis session report", ""]
-    lines.append(f"- Session: `{session['session_id']}` "
-                 f"(status: {session['status']}, "
-                 f"created: {session['created_at']}, "
+    # Same wrong-shape guard as the renderers above: the session state
+    # is hand-editable, so a persisted session can be missing the
+    # top-level keys the header reads (status / created_at /
+    # session_id). Those used to crash report composition with
+    # KeyError; render the well-shaped fields and fall back to the
+    # requested id / placeholders for the missing ones instead.
+    lines.append(f"- Session: `{session.get('session_id', session_id)}` "
+                 f"(status: {session.get('status', 'unknown')}, "
+                 f"created: {session.get('created_at') or '—'}, "
                  f"closed: {session.get('closed_at') or '—'})")
     lines.append(f"- Report generated: {_now()}")
     lines.append("")
@@ -422,7 +428,7 @@ def compose_session_report(session_id: str, *, sessions, store=None,
 
     reports_dir = artifacts_root / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
-    path = reports_dir / f"{session['session_id']}.md"
+    path = reports_dir / f"{session.get('session_id', session_id)}.md"
     text = "\n".join(lines)
     path.write_text(text, encoding="utf-8")
 
@@ -436,7 +442,7 @@ def compose_session_report(session_id: str, *, sessions, store=None,
         "dumps": len(artifacts["dumps"]),
         "carved": len(artifacts["carved"]),
     }
-    return {"session_id": session["session_id"],
+    return {"session_id": session.get("session_id", session_id),
             "sample_id": session.get("sample_id"),
             "path": str(path), "bytes": len(text.encode("utf-8")),
             "summary": summary}
