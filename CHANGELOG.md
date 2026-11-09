@@ -8,6 +8,16 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Session mutation tolerates malformed list fields** —
+  `attach_frida` / `add_note` indexed `session["frida_sessions"]` /
+  `["notes"]` directly, so a hand-edited sessions.json carrying a
+  string (or missing the key entirely) crashed the mutation with
+  `AttributeError` / `KeyError`, while report composition had already
+  learned to tolerate the same malformed state. A missing or
+  non-list field is now reset to a fresh list before the mutation
+  lands, and the repaired field is persisted. Pinned by a new test
+  in `tests/test_config_sessions.py`.
+
 - **Session report tolerates a session missing its header keys** —
   `compose_session_report` read `session['session_id']` /
   `['status']` / `['created_at']` directly, so a hand-edited

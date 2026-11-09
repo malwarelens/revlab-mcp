@@ -11,12 +11,14 @@ env fallback and the inbox / audit-log plumbing.
 
 ``sessions.py`` is likewise only exercised on its happy path in
 ``test_units.py``; here we pin unknown-session errors on every entry
-point, corrupt-state recovery, Frida attach de-duplication and the
-defaults of a freshly created session.
+point, corrupt-state recovery, Frida attach de-duplication, the
+defaults of a freshly created session, and mutation of a hand-edited
+session whose list fields are missing or wrong-shaped.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -153,3 +155,29 @@ def test_session_attach_frida_deduplicates(tmp_path):
     mgr.attach_frida(s["session_id"], "frida-1")
     mgr.attach_frida(s["session_id"], "frida-2")
     assert mgr.get(s["session_id"])["frida_sessions"] == ["frida-1", "frida-2"]
+
+
+def test_session_mutation_tolerates_malformed_list_fields(tmp_path):
+    # Hand-edited state: a string frida_sessions / notes, or the key
+    # missing entirely, used to crash attach_frida / add_note with
+    # AttributeError ('str' has no append) / KeyError. The field is
+    # reset to a fresh list and the mutation lands; the repaired
+    # state is persisted, so a reload sees the fixed field.
+    state = tmp_path / "sessions.json"
+    state.write_text(json.dumps({
+        "s1": {"session_id": "s1", "status": "open",
+               "frida_sessions": "not-a-list", "notes": []},
+        "s2": {"session_id": "s2", "status": "open",
+               "frida_sessions": [], "notes": "not-a-list"},
+        "s3": {"session_id": "s3", "status": "open"},
+    }), encoding="utf-8")
+    mgr = SessionManager(state)
+    assert mgr.attach_frida("s1", "f1")["frida_sessions"] == ["f1"]
+    assert mgr.add_note("s2", "hello")["notes"][0]["note"] == "hello"
+    assert mgr.attach_frida("s3", "f1")["frida_sessions"] == ["f1"]
+    assert mgr.add_note("s3", "hi")["notes"][0]["note"] == "hi"
+    again = SessionManager(state)
+    assert again.get("s1")["frida_sessions"] == ["f1"]
+    assert again.get("s2")["notes"][0]["note"] == "hello"
+    assert again.get("s3")["frida_sessions"] == ["f1"]
+    assert again.get("s3")["notes"][0]["note"] == "hi"

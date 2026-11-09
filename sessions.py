@@ -19,6 +19,19 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _ensure_list(session: dict, key: str) -> list:
+    """A list field of a persisted session: hand-edited state can carry
+    a missing or wrong-shaped value (a string, a dict, ...), which used
+    to crash attach_frida / add_note on .append() / KeyError. Reset it
+    to a fresh list so the mutation lands; well-shaped lists are
+    returned untouched and the repaired field is persisted by _save()."""
+    value = session.get(key)
+    if not isinstance(value, list):
+        value = []
+        session[key] = value
+    return value
+
+
 class SessionManager:
     def __init__(self, state_file: Path):
         self.state_file = Path(state_file)
@@ -90,13 +103,14 @@ class SessionManager:
 
     def attach_frida(self, session_id: str, frida_session_id: str) -> dict:
         def _add(s):
-            if frida_session_id not in s["frida_sessions"]:
-                s["frida_sessions"].append(frida_session_id)
+            frida = _ensure_list(s, "frida_sessions")
+            if frida_session_id not in frida:
+                frida.append(frida_session_id)
         return self._update(session_id, _add)
 
     def add_note(self, session_id: str, note: str) -> dict:
         def _append(s):
-            s["notes"].append({"ts": _now(), "note": note})
+            _ensure_list(s, "notes").append({"ts": _now(), "note": note})
         return self._update(session_id, _append)
 
     def close(self, session_id: str) -> dict:
