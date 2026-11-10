@@ -6,6 +6,16 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`RELAB_PORT` is validated at startup** — a non-numeric value
+  (e.g. a typo like `eighty`) used to crash `load_config()` with a
+  bare `ValueError` traceback, and an out-of-range port (0, 99999)
+  only failed later at bind time with a confusing socket error.
+  Both are now refused up front with a FATAL message and
+  `SystemExit(2)`, mirroring the token rule; valid ports are
+  1–65535. Pinned by new tests in `tests/test_config_sessions.py`.
+
 ### Fixed
 
 - **Session mutation tolerates malformed list fields** —

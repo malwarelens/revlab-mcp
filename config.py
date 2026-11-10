@@ -55,11 +55,40 @@ class Config:
         return self.artifacts_dir / "sessions.json"
 
 
+def _parse_port(raw: str | None) -> int:
+    """Parse RELAB_PORT, failing fast with a clear message.
+
+    A typo (``RELAB_PORT=eighty``) used to crash load_config() with a
+    bare ValueError traceback, and an out-of-range value (0, 99999)
+    only failed later at bind time with a confusing socket error.
+    Reject both up front, mirroring the token rule's FATAL +
+    SystemExit(2) shape; an unset / blank value falls back to 8765
+    via _env().
+    """
+    try:
+        port = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        print(
+            "FATAL: RELAB_PORT=%r is not a valid port number "
+            "(expected an integer 1-65535)." % (raw,),
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    if not 1 <= port <= 65535:
+        print(
+            "FATAL: RELAB_PORT=%d is out of range "
+            "(expected an integer 1-65535)." % port,
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return port
+
+
 def load_config() -> Config:
     """Build a Config from the environment, enforcing the token rule."""
     cfg = Config(
         host=_env("RELAB_HOST", "127.0.0.1"),
-        port=int(_env("RELAB_PORT", "8765")),
+        port=_parse_port(_env("RELAB_PORT", "8765")),
         token=_env("RELAB_TOKEN"),
         samples_dir=Path(_env("RELAB_SAMPLES_DIR", str(BASE_DIR / "samples"))),
         artifacts_dir=Path(_env("RELAB_ARTIFACTS_DIR", str(BASE_DIR / "artifacts"))),

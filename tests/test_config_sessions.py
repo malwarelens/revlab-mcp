@@ -95,6 +95,27 @@ def test_config_empty_and_blank_env_fall_back_to_defaults(
     assert cfg.port == 8765
 
 
+@pytest.mark.parametrize("port", [
+    "eighty", "8765x", "8.5", "0", "-1", "65536", "99999",
+])
+def test_config_invalid_port_refused(monkeypatch, tmp_path, port):
+    # A typo used to crash load_config() with a bare ValueError
+    # traceback, and an out-of-range port only failed later at bind
+    # time; both are now refused up front with a FATAL + SystemExit(2),
+    # mirroring the token rule.
+    _clean_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("RELAB_PORT", port)
+    with pytest.raises(SystemExit):
+        load_config()
+
+
+@pytest.mark.parametrize("port", ["1", "65535"])
+def test_config_port_boundaries_ok(monkeypatch, tmp_path, port):
+    _clean_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("RELAB_PORT", port)
+    assert load_config().port == int(port)
+
+
 def test_config_inbox_and_audit_plumbing(monkeypatch, tmp_path):
     _clean_env(monkeypatch, tmp_path)
     assert load_config().inbox_dir is None  # unset -> scan_inbox degrades

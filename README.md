@@ -129,7 +129,7 @@ Regenerate it any time with:
 | Variable | Default | Meaning |
 |---|---|---|
 | `RELAB_HOST` | `127.0.0.1` | Bind address. Non-loopback **requires** `RELAB_TOKEN`. |
-| `RELAB_PORT` | `8765` | Bind port. |
+| `RELAB_PORT` | `8765` | Bind port (1–65535; anything else is refused at startup). |
 | `RELAB_TOKEN` | — | Bearer token for agent authentication. |
 | `RELAB_SAMPLES_DIR` | `./samples` | Sample store (content-addressed by SHA-256) + `index.json`. |
 | `RELAB_ARTIFACTS_DIR` | `./artifacts` | Triage cache, dumps, carved PEs, pe-sieve output, sessions, audit log. |
