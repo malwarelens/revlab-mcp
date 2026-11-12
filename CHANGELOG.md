@@ -18,6 +18,17 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Frida event digest tolerates malformed events** —
+  `summarize_events` grouped by the event payload's `api` (or the
+  event's `type`) without checking its shape, so a script sending a
+  non-string `api` (a dict, a list, ...) crashed `frida_events_digest`
+  with `TypeError` (unhashable key), a non-dict entry crashed it with
+  `AttributeError`, and a numeric `api` silently became a non-string
+  `by_api` key. Malformed entries are now dropped, non-string names
+  fall back to the event type or `unknown`, and `by_api` keys are
+  always strings. Pinned by a new test in
+  `tests/test_frida_events.py`.
+
 - **Session mutation tolerates malformed list fields** —
   `attach_frida` / `add_note` indexed `session["frida_sessions"]` /
   `["notes"]` directly, so a hand-edited sessions.json carrying a

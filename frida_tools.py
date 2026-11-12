@@ -45,12 +45,26 @@ def summarize_events(events: list[dict], recent: int = 10) -> dict:
     bundled scripts send() {api: ..., args: ...}); portal events like
     script-load markers live there too. Anything without one falls
     back to the event's "type".
+
+    Events arrive from Frida scripts, so their shape is not fully
+    trusted: a non-dict entry, or an "api" / "type" that is not a
+    string (a dict or list from a buggy script), used to crash the
+    digest with AttributeError / TypeError (unhashable key) and
+    surface as an unhandled tool error from frida_events_digest.
+    Malformed entries are dropped and non-string names fall back to
+    the event type or "unknown", mirroring how the report renderers
+    treat wrong-shaped fields; well-shaped events still group.
     """
+    events = [e for e in events if isinstance(e, dict)]
     by_api: dict[str, int] = {}
     for event in events:
         payload = event.get("payload")
         api = payload.get("api") if isinstance(payload, dict) else None
-        key = api or event.get("type") or "unknown"
+        api = api if isinstance(api, str) and api else None
+        event_type = event.get("type")
+        event_type = event_type if isinstance(event_type, str) \
+            and event_type else None
+        key = api or event_type or "unknown"
         by_api[key] = by_api.get(key, 0) + 1
     recent = max(0, int(recent))
     return {

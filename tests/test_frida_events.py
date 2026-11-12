@@ -78,6 +78,29 @@ def test_summarize_events_groups_by_api():
     assert digest["recent"] == events[-2:]
 
 
+def test_summarize_events_tolerates_malformed_entries():
+    # A buggy script can send() a payload whose "api" is a dict or a
+    # list, a non-string "type", or a bare non-dict entry; all of those
+    # used to crash the digest (AttributeError / TypeError on the
+    # unhashable grouping key) instead of returning a summary.
+    events = [_event("CreateFileW"),
+              {"ts": "t", "type": "send",
+               "payload": {"api": {"nested": 1}}},
+              {"ts": "t", "type": ["not", "a", "string"],
+               "payload": "not-a-dict"},
+              "not-a-dict",
+              {"ts": "t", "type": "send", "payload": {"api": 42}}]
+    digest = summarize_events(events, recent=10)
+    assert digest["total"] == 4
+    # Non-string api falls back to the (string) event type; only an
+    # event with neither a string api nor a string type is "unknown".
+    assert digest["by_api"] == {"CreateFileW": 1, "send": 2,
+                                 "unknown": 1}
+    assert all(isinstance(k, str) for k in digest["by_api"])
+    assert digest["recent"] == events[:1] + events[1:3] + events[4:]
+
+
+
 def test_events_persist_to_jsonl_and_digest(tmp_path, monkeypatch):
     monkeypatch.setattr(frida_tools, "FRIDA_AVAILABLE", True)
     mgr = FridaManager(tmp_path / "frida")
