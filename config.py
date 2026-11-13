@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +33,50 @@ def _is_loopback(host: str) -> bool:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
+
+
+# A RELAB_HOST value with a trailing :<digits> suffix -- the operator
+# put host:port in the wrong variable (e.g. 127.0.0.1:8765, [::1]:8765).
+_HOST_PORT_RE = re.compile(r"^(?P<host>\[[^\]]+\]|[^:]+):(?P<port>\d+)$")
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _looks_like_host_with_port(host: str) -> bool:
+    """True when RELAB_HOST carries a :port suffix instead of a bare
+    bind address.
+
+    A bare loopback spelling or IP literal is never this (so ``::1``
+    and ``::`` are safe: they parse as IP addresses first). Anything
+    else shaped as ``<host>:<digits>`` -- an IP, ``localhost``, a
+    bracketed IPv6 literal or a plain hostname before the colon --
+    is the host:port typo. Unshaped garbage (``1:2:3``, ``not a host``)
+    is left to the existing token / bind-time behaviour.
+    """
+    if _is_loopback(host):
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        pass
+    match = _HOST_PORT_RE.match(host)
+    if not match:
+        return False
+    inner = match.group("host")
+    if inner.startswith("[") and inner.endswith("]"):
+        try:
+            ipaddress.ip_address(inner[1:-1])
+        except ValueError:
+            return False
+        return True
+    if inner.lower() == "localhost":
+        return True
+    try:
+        ipaddress.ip_address(inner)
+        return True
+    except ValueError:
+        pass
+    return bool(_HOSTNAME_RE.match(inner))
 
 
 @dataclass
@@ -99,6 +144,21 @@ def load_config() -> Config:
         cfg.inbox_dir = Path(inbox)
     if audit := _env("RELAB_AUDIT_LOG"):
         cfg.audit_log_path = Path(audit)
+
+    if _looks_like_host_with_port(cfg.host):
+        # Same fail-fast shape as _parse_port: a host:port value in
+        # RELAB_HOST used to be misread as a non-loopback address
+        # (a misleading FATAL about the missing token) or, with a
+        # token set, accepted and only failed later at bind time with
+        # a confusing socket error. Refuse it before the token rule
+        # so the operator gets the real diagnosis.
+        print(
+            "FATAL: RELAB_HOST=%s looks like a host:port value; "
+            "RELAB_HOST takes only the bind address, put the port "
+            "in RELAB_PORT instead." % cfg.host,
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
     if not _is_loopback(cfg.host) and not cfg.token:
         print(

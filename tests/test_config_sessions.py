@@ -116,6 +116,47 @@ def test_config_port_boundaries_ok(monkeypatch, tmp_path, port):
     assert load_config().port == int(port)
 
 
+@pytest.mark.parametrize("host", [
+    "127.0.0.1:8765", "localhost:8765", "LOCALHOST:9000",
+    "0.0.0.0:9000", "192.168.56.10:8765", "[::1]:8765",
+    "analysis-host:8765",
+])
+def test_config_host_with_port_suffix_refused(monkeypatch, tmp_path,
+                                              capsys, host):
+    # A host:port value in RELAB_HOST used to be misread as a
+    # non-loopback address (a misleading FATAL about the missing
+    # token) or, with a token set, accepted and only failed later at
+    # bind time. It is now refused up front, with the FATAL naming
+    # RELAB_PORT as the right place for the port -- with or without
+    # a token, since binding would fail either way.
+    _clean_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("RELAB_HOST", host)
+    with pytest.raises(SystemExit):
+        load_config()
+    assert "RELAB_PORT" in capsys.readouterr().err
+
+    _clean_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("RELAB_HOST", host)
+    monkeypatch.setenv("RELAB_TOKEN", "tok")
+    with pytest.raises(SystemExit):
+        load_config()
+    assert "RELAB_PORT" in capsys.readouterr().err
+
+
+def test_config_bare_ipv6_spellings_not_mistaken_for_host_port(
+        monkeypatch, tmp_path):
+    # Guard for the host:port check: "::1" and "::" contain colons
+    # but are bare IPv6 literals, not a host with a port suffix.
+    _clean_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("RELAB_HOST", "::1")
+    assert load_config().host == "::1"
+
+    _clean_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("RELAB_HOST", "::")
+    monkeypatch.setenv("RELAB_TOKEN", "tok")
+    assert load_config().host == "::"
+
+
 def test_config_inbox_and_audit_plumbing(monkeypatch, tmp_path):
     _clean_env(monkeypatch, tmp_path)
     assert load_config().inbox_dir is None  # unset -> scan_inbox degrades

@@ -18,6 +18,17 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`RELAB_HOST` carrying a `:port` suffix is refused up front** —
+  `127.0.0.1:8765` (or `localhost:8765`, `[::1]:8765`, a LAN address
+  or hostname with a port) used to be misread as a non-loopback
+  address, so without a token it failed with a misleading FATAL
+  about the missing token, and with a token it was silently accepted
+  and only failed later at bind time with a confusing socket error.
+  It is now refused at startup with a FATAL naming `RELAB_PORT` as
+  the right place for the port. Bare IPv6 literals (`::1`, `::`) are
+  not mistaken for a host:port value. Pinned by new tests in
+  `tests/test_config_sessions.py`.
+
 - **Frida event digest tolerates malformed events** —
   `summarize_events` grouped by the event payload's `api` (or the
   event's `type`) without checking its shape, so a script sending a
