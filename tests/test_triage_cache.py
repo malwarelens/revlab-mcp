@@ -15,6 +15,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
@@ -78,3 +80,24 @@ def test_valid_dict_cache_is_still_served(tmp_path):
                                  "hashes": {"sha256": sample_id}}))
     served = _call(mcp, "static_triage", sample_id=sample_id)
     assert served["triage"]["marker"] == "from-cache"
+
+
+@pytest.mark.parametrize("bad_strings", ["hand-edited", 42, None, ["a"]])
+def test_malformed_strings_field_in_cache_does_not_crash_summary(
+        tmp_path, bad_strings):
+    """A valid top-level dict cache is served verbatim, so a
+    hand-edited "strings" field of the wrong shape used to crash
+    get_strings_summary with AttributeError on .get() ('str' object
+    has no attribute 'get'), while static_triage served the same
+    cache fine. The summary now treats the malformed field as
+    absent and still returns the other fields."""
+    mcp, sample_id, cache = _lab(tmp_path)
+    cache.write_text(json.dumps({"file_type": "PE", "size": 123,
+                                 "strings": bad_strings,
+                                 "iocs": {}, "suspicious_apis": {},
+                                 "indicators": []}))
+    summary = _call(mcp, "get_strings_summary", sample_id=sample_id)
+    assert summary["ok"] is True
+    assert summary["ascii_string_count"] is None
+    assert summary["utf16_string_count"] is None
+    assert summary["file_type"] == "PE"

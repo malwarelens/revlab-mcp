@@ -29,6 +29,16 @@ and the project uses [Semantic Versioning](https://semver.org/).
   not mistaken for a host:port value. Pinned by new tests in
   `tests/test_config_sessions.py`.
 
+- **`get_strings_summary` tolerates a malformed `strings` field in the
+  triage cache** — `run_triage` serves a cached dict verbatim once its
+  top level is a dict, so a hand-edited cache carrying a `strings`
+  field of the wrong shape (a string, an int, `null`, a list, ...)
+  crashed the summary with `AttributeError` on `.get()`, while
+  `static_triage` served the same cache fine and the report renderer
+  had already learned to guard the same field. A malformed `strings`
+  field is now treated as absent and the other fields still render.
+  Pinned by a new test in `tests/test_triage_cache.py`.
+
 - **Frida event digest tolerates malformed events** —
   `summarize_events` grouped by the event payload's `api` (or the
   event's `type`) without checking its shape, so a script sending a

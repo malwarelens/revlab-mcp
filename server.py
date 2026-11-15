@@ -258,13 +258,22 @@ def build_server(cfg: Config) -> FastMCP:
         """Lightweight view over the triage result: string counts plus the
         extracted IOCs, suspicious API names and triage indicators."""
         triage = run_triage(sample_id)
+        # run_triage serves a cached dict verbatim once its top level
+        # is a dict, so a hand-edited cache can carry a "strings"
+        # field of the wrong shape (a string, an int, ...), which
+        # used to crash this summary with AttributeError on .get().
+        # Render the well-shaped fields and treat a malformed field
+        # as absent, like report._as_dict does for triage fields.
+        strings = triage.get("strings")
+        if not isinstance(strings, dict):
+            strings = {}
         return {
             "ok": True,
             "sample_id": sample_id,
             "file_type": triage.get("file_type"),
             "size": triage.get("size"),
-            "ascii_string_count": triage.get("strings", {}).get("ascii_count"),
-            "utf16_string_count": triage.get("strings", {}).get("utf16_count"),
+            "ascii_string_count": strings.get("ascii_count"),
+            "utf16_string_count": strings.get("utf16_count"),
             "iocs": triage.get("iocs"),
             "suspicious_apis": triage.get("suspicious_apis"),
             "indicators": triage.get("indicators"),
