@@ -18,6 +18,17 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **capa parser tolerates non-string ATT&CK / MBC fields** — a
+  malformed capa document carrying a dict or list as an ATT&CK
+  `tactic` or MBC `objective` used to crash `parse_capa_output`
+  with `TypeError` (unhashable dict key) when grouping by tactic,
+  and a non-string rule `name` crashed `sorted()` against the
+  string names of the other rules sharing a tactic. Non-string
+  fields are now treated as absent (the rule still counts and
+  well-shaped tactics still group) and a non-string name falls
+  back to the rule key. Pinned by a new test in
+  `tests/test_capa.py`.
+
 - **`RELAB_HOST` carrying a `:port` suffix is refused up front** —
   `127.0.0.1:8765` (or `localhost:8765`, `[::1]:8765`, a LAN address
   or hostname with a port) used to be misread as a non-loopback

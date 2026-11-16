@@ -36,15 +36,22 @@ def find_capa() -> str | None:
     return shutil.which("capa")
 
 
+def _as_str(value) -> str | None:
+    """A capa meta field that must be a string: a dict / list / number
+    from a malformed document is treated as absent instead of flowing
+    into a dict key (unhashable) or a sorted() call downstream."""
+    return value if isinstance(value, str) else None
+
+
 def _clean_attack(entries) -> list[dict]:
     out = []
     for entry in entries or []:
         if not isinstance(entry, dict):
             continue
         out.append({
-            "id": entry.get("id"),
-            "tactic": entry.get("tactic"),
-            "technique": entry.get("technique"),
+            "id": _as_str(entry.get("id")),
+            "tactic": _as_str(entry.get("tactic")),
+            "technique": _as_str(entry.get("technique")),
         })
     return out
 
@@ -55,9 +62,9 @@ def _clean_mbc(entries) -> list[dict]:
         if not isinstance(entry, dict):
             continue
         out.append({
-            "id": entry.get("id"),
-            "objective": entry.get("objective"),
-            "behavior": entry.get("behavior"),
+            "id": _as_str(entry.get("id")),
+            "objective": _as_str(entry.get("objective")),
+            "behavior": _as_str(entry.get("behavior")),
         })
     return out
 
@@ -89,7 +96,13 @@ def parse_capa_output(data: dict) -> dict:
         meta = rule.get("meta") or {}
         if not isinstance(meta, dict):
             meta = {}
-        name = meta.get("name") or key
+        name = meta.get("name")
+        # A non-string name (a number, a dict, ...) would end up in the
+        # grouped lists below, where sorted() compares it against the
+        # string names of the other rules and raises TypeError; fall
+        # back to the rule key, which is always a string.
+        if not isinstance(name, str) or not name:
+            name = key
         attack = _clean_attack(meta.get("att&ck"))
         mbc = _clean_mbc(meta.get("mbc"))
         matches = rule.get("matches") or {}

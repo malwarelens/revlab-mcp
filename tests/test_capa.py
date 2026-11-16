@@ -152,3 +152,44 @@ def test_parse_capa_output_tolerates_gaps():
     assert summary["by_mbc_objective"] == {}
     names = {c["name"] for c in summary["capabilities"]}
     assert names == {"bare rule", "no meta", "broken"}
+
+
+def test_parse_capa_output_tolerates_non_string_attack_fields():
+    # A malformed att&ck / mbc entry whose tactic or objective is a
+    # dict or list used to crash the grouping on the dict-key
+    # assignment (TypeError: unhashable), and a non-string rule name
+    # used to crash sorted() against the string names of the other
+    # rules sharing a tactic. Non-string fields are treated as
+    # absent; the rule still counts and the well-shaped tactic
+    # still groups.
+    summary = capa_tools.parse_capa_output({
+        "rules": {
+            "bad tactic": {"meta": {
+                "name": "bad tactic",
+                "att&ck": [{"id": "T1", "tactic": {"x": 1},
+                            "technique": ["a"]}],
+                "mbc": [{"id": "M1", "objective": ["a"],
+                         "behavior": {"b": 2}}],
+            }, "matches": {}},
+            "bad name": {"meta": {
+                "name": 42,
+                "att&ck": [{"id": "T2", "tactic": "Defense Evasion",
+                            "technique": "t"}],
+            }, "matches": {}},
+            "good": {"meta": {
+                "name": "good",
+                "att&ck": [{"id": "T3", "tactic": "Defense Evasion",
+                            "technique": "t"}],
+            }, "matches": {}},
+        },
+    })
+    assert summary["capability_count"] == 3
+    caps = {c["name"]: c for c in summary["capabilities"]}
+    assert caps["bad tactic"]["attack"] == [
+        {"id": "T1", "tactic": None, "technique": None}]
+    assert caps["bad tactic"]["mbc"] == [
+        {"id": "M1", "objective": None, "behavior": None}]
+    assert caps["bad name"]["name"] == "bad name"
+    assert summary["by_attack_tactic"] == {
+        "Defense Evasion": ["bad name", "good"]}
+    assert summary["by_mbc_objective"] == {}
