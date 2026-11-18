@@ -18,6 +18,22 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Bridge responses must be JSON objects, malformed hex is a
+  structured error** — `X64dbgBackend._request` returned `resp.json()`
+  unchecked, so a bridge answering `/session/start` (or any endpoint)
+  with a JSON list / string / number crashed `launch` / `attach` /
+  `terminate` on `.get()` / `**`-unpacking with `AttributeError` /
+  `TypeError`, and the server's `debug_launch` indexing of the result
+  crashed the same way; none of it is a `DebuggerError`, so `guard()`
+  did not translate it and it surfaced as an unhandled tool error. A
+  non-object document is now refused with `DebuggerError`. The same
+  gap existed in `read_memory_bytes`, where a non-string `hex` field
+  (a number, a list, ...) or malformed hex (odd length, non-hex
+  chars) crashed `bytes.fromhex` with `TypeError` / `ValueError`,
+  which `dump_memory_region` does not catch; it now raises
+  `DebuggerError` instead. Pinned by new tests in
+  `tests/test_bridge_responses.py` (MockTransport bridge).
+
 - **capa parser tolerates non-string ATT&CK / MBC fields** — a
   malformed capa document carrying a dict or list as an ATT&CK
   `tactic` or MBC `objective` used to crash `parse_capa_output`

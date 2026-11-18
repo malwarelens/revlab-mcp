@@ -241,7 +241,7 @@ python3 -m venv .venv
   `tests/test_report.py`, `tests/test_ghidra.py`,
   `tests/test_inbox.py`, `tests/test_frida_events.py`,
   `tests/test_audit.py`, `tests/test_unpack.py`,
-  `tests/test_state_recovery.py`,
+  `tests/test_state_recovery.py`, `tests/test_bridge_responses.py`,
   `tests/test_debug_sessions.py`) cover config enforcement (including
   the non-loopback token rule), the sample store (including
   path-traversal resistance), session persistence, state-file
@@ -257,7 +257,9 @@ python3 -m venv .venv
   against a fake executable), bundled-script
   syntax (`node --check`), and two-backend debug isolation against
   the mock bridge (breakpoints, run state and registers stay
-  per-session).
+  per-session), and bridge response-shape handling (a non-object JSON
+  document or a malformed `hex` field becomes a structured
+  `DebuggerError` instead of an unhandled tool error).
 * **End-to-end test** (`tests/test_e2e.py`) starts the mock bridge
   and the real server, connects with a real MCP client, asserts the
   full tool list (all 46 tools), and drives: auth refusal (401),

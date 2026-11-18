@@ -38,9 +38,21 @@ class X64dbgBackend(DebuggerBackend):
                 detail = resp.text[:200]
             raise DebuggerError(f"bridge {method} {path} -> HTTP {resp.status_code}: {detail}")
         try:
-            return resp.json()
+            data = resp.json()
         except Exception as exc:  # noqa: BLE001
             raise DebuggerError(f"bridge {method} {path} returned non-JSON") from exc
+        # Every caller assumes an object: launch/attach/terminate call
+        # .get() and **-unpack it, and the server indexes the result
+        # (result["analysis_session"], result.get("ok")). A bridge
+        # returning a JSON list / string / number used to crash those
+        # call sites with AttributeError / TypeError, surfacing as an
+        # unhandled tool error instead of the structured DebuggerError
+        # the guard() wrapper turns into {"ok": False, ...}.
+        if not isinstance(data, dict):
+            raise DebuggerError(
+                f"bridge {method} {path} returned non-object JSON "
+                f"({type(data).__name__}); expected a JSON object")
+        return data
 
     def _session(self) -> str:
         if not self.bridge_session_id:
@@ -144,7 +156,23 @@ class X64dbgBackend(DebuggerBackend):
 
     def read_memory_bytes(self, address, size: int) -> bytes:
         data = self.read_memory(address, size)
-        return bytes.fromhex(data.get("hex", ""))
+        hex_text = data.get("hex", "")
+        # The bridge's "hex" field is the only thing between a memory
+        # dump and the file on disk: a non-string value (a number, a
+        # list, ...) or malformed hex (odd length, non-hex chars) used
+        # to crash bytes.fromhex with TypeError / ValueError, which
+        # dump_memory_region does not catch (it only translates
+        # DebuggerError), surfacing as an unhandled tool error.
+        if not isinstance(hex_text, str):
+            raise DebuggerError(
+                "bridge returned a non-string 'hex' field for the memory "
+                f"read ({type(hex_text).__name__}); expected hex text")
+        try:
+            return bytes.fromhex(hex_text)
+        except ValueError as exc:
+            raise DebuggerError(
+                f"bridge returned malformed hex for the memory read: {exc}"
+            ) from exc
 
     def disassemble(self, address, count: int = 16) -> dict:
         return self._request("POST", "/disasm", json={
