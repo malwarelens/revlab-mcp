@@ -250,6 +250,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
   Previously the configured path was only exercised up to the
   "not configured" / "not found" early returns.
 
+- **Unknown analysis_session is rejected before launch / attach** —
+  `debug_launch`, `debug_attach`, `frida_spawn` and `frida_attach`
+  bound to `analysis_session` only after the side effect, so a bogus
+  id raised `ValueError` from `sessions.attach_debugger` /
+  `attach_frida` once the debuggee was already launched: the tool
+  errored (unhandled) even though the launch had succeeded, and the
+  agent lost the bridge session id while the backend stayed bound
+  under the bogus key. The session is now validated first and a
+  bogus id returns a structured `{"ok": False, ...}` without
+  launching anything. Pinned by new tests in
+  `tests/test_analysis_session_validation.py`.
+
 ### Added
 
 - **State recovery unit tests** — new `tests/test_state_recovery.py`

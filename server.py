@@ -137,6 +137,23 @@ def build_server(cfg: Config) -> FastMCP:
         except DebuggerError as exc:
             return {"ok": False, "configured": True, "error": str(exc)}
 
+    def _check_analysis_session(analysis_session: str) -> dict | None:
+        """Structured error when analysis_session names no known
+        session, else None. Checked before any launch / attach /
+        spawn side effect: binding to a bogus id used to raise
+        ValueError from sessions.attach_debugger / attach_frida
+        *after* the debuggee was already launched, so the tool
+        errored even though the launch had succeeded -- and the agent
+        lost the bridge session id while the backend stayed bound
+        under the bogus key."""
+        if not analysis_session:
+            return None
+        try:
+            sessions.get(analysis_session)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return None
+
     def routed(session_id: str, method: str, *args, **kwargs) -> dict:
         """Call `method` on the backend bound to session_id (or the
         current backend when session_id is empty)."""
@@ -353,6 +370,9 @@ def build_server(cfg: Config) -> FastMCP:
         current backend is used. Pass analysis_session to also link
         the bridge session into the analysis session record.
         """
+        err = _check_analysis_session(analysis_session)
+        if err is not None:
+            return err
         key = session_id or analysis_session
         inst = backend_for(key, create=True) if key else default_backend
         if inst is None:
@@ -376,6 +396,9 @@ def build_server(cfg: Config) -> FastMCP:
                      session_id: str = "") -> dict:
         """Attach the debugger to a running process on the analysis
         host. session_id / analysis_session route like debug_launch."""
+        err = _check_analysis_session(analysis_session)
+        if err is not None:
+            return err
         key = session_id or analysis_session
         inst = backend_for(key, create=True) if key else default_backend
         result = guard(inst, inst.attach, pid) if inst else no_backend()
@@ -504,6 +527,9 @@ def build_server(cfg: Config) -> FastMCP:
     def frida_spawn(program_path: str, argv: list[str] | None = None,
                     analysis_session: str = "") -> dict:
         """Spawn a program on the analysis host under Frida (suspended)."""
+        err = _check_analysis_session(analysis_session)
+        if err is not None:
+            return err
         result = frida_mgr.spawn(program_path, argv)
         if analysis_session and result.get("ok"):
             sessions.attach_frida(analysis_session, result["frida_session"])
@@ -521,6 +547,9 @@ def build_server(cfg: Config) -> FastMCP:
     @audit
     def frida_attach(pid: int, analysis_session: str = "") -> dict:
         """Attach Frida to a running process on the analysis host."""
+        err = _check_analysis_session(analysis_session)
+        if err is not None:
+            return err
         result = frida_mgr.attach(pid)
         if analysis_session and result.get("ok"):
             sessions.attach_frida(analysis_session, result["frida_session"])
