@@ -18,6 +18,20 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Malformed numeric arguments are structured errors, not unhandled
+  crashes** — `debug_read_memory` / `debug_disassemble` / `debug_attach`
+  coerced `size` / `count` / `pid` with a bare `int()`, and
+  `dump_memory_region` did the same for `size` (and raised `ValueError`
+  for a non-positive size), while the server's `guard()` only translates
+  `DebuggerError` -- so a non-numeric argument surfaced as an unhandled
+  tool error instead of the structured `{"ok": False, ...}` result that
+  `parse_address()` already guarantees for malformed addresses. Numeric
+  coercion now raises `DebuggerError` (and `debug_disassemble` rejects a
+  non-positive count like `read_memory` already rejects a non-positive
+  size), and `pe_sieve_scan` returns its usual structured error for a
+  non-numeric pid. Pinned by new tests in `tests/test_bridge_responses.py`
+  and `tests/test_unpack.py`.
+
 - **Bridge responses must be JSON objects, malformed hex is a
   structured error** — `X64dbgBackend._request` returned `resp.json()`
   unchecked, so a bridge answering `/session/start` (or any endpoint)

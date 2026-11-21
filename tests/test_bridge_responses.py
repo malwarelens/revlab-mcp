@@ -9,6 +9,12 @@ read_memory_bytes in bytes.fromhex with TypeError / ValueError. Neither
 is a DebuggerError, so the server's guard() did not translate it and
 both surfaced as unhandled tool errors. Both are now DebuggerError,
 which the server turns into the structured {"ok": False, ...} result.
+
+The same holds for the backend's numeric arguments: read_memory /
+disassemble / attach coerced size / count / pid with a bare int(),
+so a non-numeric value raised ValueError -- which guard() does not
+catch -- instead of the structured error. Those are DebuggerError
+now, as is a non-positive disassemble count.
 """
 
 from __future__ import annotations
@@ -95,3 +101,28 @@ def test_bridge_well_shaped_responses_still_flow():
     backend = _backend(handler)
     assert backend.launch("/tmp/x.exe")["session_id"] == "s1"
     assert backend.read_memory_bytes("0x140001000", 2) == b"\x00\xff"
+
+
+@pytest.mark.parametrize("bad_number", ["abc", "1k", None, [16]])
+def test_malformed_numeric_arguments_are_debugger_error(bad_number):
+    """Numeric tool arguments are coerced with a bare int() in
+    read_memory / disassemble / attach, so a non-numeric value used
+    to raise ValueError -- which the server's guard() does not catch
+    (only DebuggerError) -- surfacing as an unhandled tool error
+    instead of the structured {"ok": False, ...} result. They now
+    raise DebuggerError, like parse_address() already does for a
+    malformed address; a non-positive disassemble count is rejected
+    the same way read_memory already rejects a non-positive size."""
+    with pytest.raises(DebuggerError):
+        _backend(lambda r: httpx.Response(200, json={})).attach(bad_number)
+
+    with pytest.raises(DebuggerError):
+        _backend(lambda r: httpx.Response(200, json={})).read_memory(
+            "0x140001000", bad_number)
+
+    backend = _launched(lambda r: httpx.Response(200, json={}))
+    with pytest.raises(DebuggerError):
+        backend.disassemble("0x140001000", bad_number)
+    for bad_count in (0, -4):
+        with pytest.raises(DebuggerError):
+            backend.disassemble("0x140001000", bad_count)

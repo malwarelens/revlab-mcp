@@ -15,7 +15,8 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from debugger.base import MAX_READ_MEMORY, DebuggerBackend, parse_address
+from debugger.base import (MAX_READ_MEMORY, DebuggerBackend,
+                           DebuggerError, parse_address)
 
 _KNOWN_MACHINES = {0x014C, 0x8664, 0x01C0, 0x01C4, 0xAA64, 0x0200}
 
@@ -113,9 +114,18 @@ def dump_memory_region(backend: DebuggerBackend, address, size: int,
     """Read a region through the debugger backend (64 KiB chunks) and
     write it to artifacts/dumps/. Returns metadata, never the bytes."""
     addr = parse_address(address)
-    size = int(size)
+    try:
+        size = int(size)
+    except (TypeError, ValueError):
+        # Like parse_address() in debugger/base.py: a malformed
+        # argument is a DebuggerError, which the server's
+        # dump_memory_region wrapper turns into the structured
+        # {"ok": False, ...} result; a bare int() used to surface as
+        # an unhandled tool error. The same applied to the
+        # non-positive check below, which raised ValueError.
+        raise DebuggerError(f"invalid size: {size!r}") from None
     if size <= 0:
-        raise ValueError("size must be positive")
+        raise DebuggerError("size must be positive")
     out_dir = Path(artifacts_dir) / "dumps"
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -148,6 +158,14 @@ def dump_memory_region(backend: DebuggerBackend, address, size: int,
 
 def pe_sieve_scan(pesieve_path: str | None, pid: int,
                   artifacts_dir: Path, timeout: int = 180) -> dict:
+    # pe-sieve degrades to structured results for every other failure,
+    # so a non-numeric pid does the same instead of crashing the
+    # subprocess call below on int() with an unhandled ValueError.
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return {"ok": False, "configured": True,
+                "error": f"invalid pid: {pid!r}"}
     if not pesieve_path:
         return {"ok": False, "configured": False,
                 "error": "pe-sieve is not configured on the analysis host; "
@@ -161,7 +179,7 @@ def pe_sieve_scan(pesieve_path: str | None, pid: int,
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
         proc = subprocess.run(
-            [str(exe), "/pid", str(int(pid)), "/json"],
+            [str(exe), "/pid", str(pid), "/json"],
             capture_output=True, text=True, timeout=timeout, cwd=str(out_dir),
         )
     except subprocess.TimeoutExpired:
@@ -170,7 +188,7 @@ def pe_sieve_scan(pesieve_path: str | None, pid: int,
     except OSError as exc:
         return {"ok": False, "configured": True, "error": f"failed to run pe-sieve: {exc}"}
 
-    result: dict = {"ok": proc.returncode == 0, "configured": True, "pid": int(pid),
+    result: dict = {"ok": proc.returncode == 0, "configured": True, "pid": pid,
                     "output_dir": str(out_dir), "returncode": proc.returncode}
     stdout = proc.stdout or ""
     parsed = None

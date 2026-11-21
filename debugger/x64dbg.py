@@ -13,6 +13,18 @@ from .base import (MAX_READ_MEMORY, DebuggerBackend, DebuggerError,
                    fmt_address, parse_address)
 
 
+def _as_int(value, what: str) -> int:
+    """Coerce a numeric tool argument, raising DebuggerError (not
+    ValueError) on a non-numeric value, so the server's guard() turns
+    it into the structured {"ok": False, ...} result -- the same
+    contract parse_address() already keeps for addresses. A bare
+    int() here used to surface as an unhandled tool error."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise DebuggerError(f"invalid {what}: {value!r}") from None
+
+
 class X64dbgBackend(DebuggerBackend):
     name = "x64dbg"
 
@@ -79,9 +91,10 @@ class X64dbgBackend(DebuggerBackend):
 
     def attach(self, pid: int) -> dict:
         self._require_idle("attaching again")
-        data = self._request("POST", "/session/start", json={"pid": int(pid)})
+        pid = _as_int(pid, "pid")
+        data = self._request("POST", "/session/start", json={"pid": pid})
         self.bridge_session_id = data.get("session_id")
-        self.pid = data.get("pid", int(pid))
+        self.pid = data.get("pid", pid)
         return {"ok": True, "backend": self.name, **data}
 
     def terminate(self) -> dict:
@@ -140,7 +153,7 @@ class X64dbgBackend(DebuggerBackend):
                              params={"session_id": self._session()})
 
     def read_memory(self, address, size: int) -> dict:
-        size = int(size)
+        size = _as_int(size, "size")
         if size <= 0:
             raise DebuggerError("size must be positive")
         if size > MAX_READ_MEMORY:
@@ -175,10 +188,13 @@ class X64dbgBackend(DebuggerBackend):
             ) from exc
 
     def disassemble(self, address, count: int = 16) -> dict:
+        count = _as_int(count, "count")
+        if count <= 0:
+            raise DebuggerError("count must be positive")
         return self._request("POST", "/disasm", json={
             "session_id": self._session(),
             "address": fmt_address(parse_address(address)),
-            "count": int(count),
+            "count": count,
         })
 
     def get_callstack(self) -> dict:

@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import make_samples  # noqa: E402
-from debugger.base import MAX_READ_MEMORY  # noqa: E402
+from debugger.base import MAX_READ_MEMORY, DebuggerError  # noqa: E402
 from unpack import carve_pe, carve_pe_from_file, dump_memory_region, pe_sieve_scan  # noqa: E402
 
 
@@ -116,7 +116,18 @@ class _FakeBackend:
 def test_dump_rejects_non_positive_size(tmp_path):
     backend = _FakeBackend(0x1000, b"\x00" * 16)
     for bad in (0, -5):
-        with pytest.raises(ValueError, match="size must be positive"):
+        # DebuggerError (not ValueError): the server's dump tool only
+        # translates DebuggerError, so a ValueError here used to
+        # surface as an unhandled tool error.
+        with pytest.raises(DebuggerError, match="size must be positive"):
+            dump_memory_region(backend, "0x1000", bad, tmp_path)
+    assert backend.calls == []  # rejected before any backend read
+
+
+def test_dump_rejects_non_numeric_size(tmp_path):
+    backend = _FakeBackend(0x1000, b"\x00" * 16)
+    for bad in ("1k", "abc", None):
+        with pytest.raises(DebuggerError, match="invalid size"):
             dump_memory_region(backend, "0x1000", bad, tmp_path)
     assert backend.calls == []  # rejected before any backend read
 
@@ -206,6 +217,16 @@ def test_pe_sieve_configured_but_missing(tmp_path):
     result = pe_sieve_scan(missing, 4242, tmp_path)
     assert result["ok"] is False and result["configured"] is True
     assert missing in result["error"]
+
+
+def test_pe_sieve_rejects_non_numeric_pid(tmp_path):
+    # Like every other pe-sieve failure, a malformed pid degrades to
+    # a structured result instead of crashing the subprocess call on
+    # int() with an unhandled ValueError.
+    for bad in ("abc", "1k", None):
+        result = pe_sieve_scan(None, bad, tmp_path)
+        assert result["ok"] is False and result["configured"] is True
+        assert "invalid pid" in result["error"]
 
 
 def test_pe_sieve_parses_json_after_noise(fake_pesieve, tmp_path, monkeypatch):
