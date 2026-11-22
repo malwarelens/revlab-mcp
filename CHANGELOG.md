@@ -18,6 +18,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Bridge adapter answers malformed arguments with 400, not 500** —
+  `/memory`, `/disasm` and `/breakpoints` coerced caller-supplied
+  `size` / `count` / `address` with a bare `int()` / `parse_address()`,
+  and `set_breakpoint` did `"!" in location` without checking the
+  type, so a non-numeric size, a malformed address, or a non-string
+  location leaked through `_dispatch`'s last-resort guard as a 500
+  "internal bridge error" even though the fault is the caller's. The
+  adapter now has `_as_int` / `_parse_address` helpers (mirroring
+  `debugger/x64dbg.py::_as_int`) that raise `BridgeError(400)` with a
+  named message, and a non-string `location` is refused the same way.
+  Pinned by a new test in `bridge_adapter/tests/test_adapter.py`.
+
 - **Malformed numeric arguments are structured errors, not unhandled
   crashes** — `debug_read_memory` / `debug_disassemble` / `debug_attach`
   coerced `size` / `count` / `pid` with a bare `int()`, and

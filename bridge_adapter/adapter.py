@@ -83,6 +83,27 @@ def fmt_address(value: int, width: int = 0) -> str:
     return f"0x{value:X}"
 
 
+def _as_int(value, what: str) -> int:
+    """Coerce a caller-supplied numeric argument, raising BridgeError(400)
+    (not ValueError) on a non-numeric value -- mirrors
+    debugger/x64dbg.py::_as_int. A bare int() here used to leak through
+    _dispatch's last-resort guard as a 500 'internal bridge error',
+    even though a bad argument is a client error."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise BridgeError(400, f"invalid {what}: {value!r}") from None
+
+
+def _parse_address(value) -> int:
+    """parse_address() with client-error translation: a malformed
+    address is a 400, not a 500."""
+    try:
+        return parse_address(value)
+    except (TypeError, ValueError):
+        raise BridgeError(400, f"invalid address: {value!r}") from None
+
+
 class Session:
     def __init__(self, session_id: str, client: AutomateClient):
         self.session_id = session_id
@@ -405,7 +426,7 @@ class SessionManager:
                 raise BridgeError(400, "either 'address' or 'location' is required")
             addr = None
             if address is not None:
-                addr = parse_address(address)
+                addr = _parse_address(address)
                 ok = client.set_breakpoint(addr)
             else:
                 # Resolve first when possible so the response can carry
@@ -414,6 +435,8 @@ class SessionManager:
                 # WinDbg-style "module!Symbol"; x64dbg's expression
                 # syntax for the same symbol is "module:Symbol", so try
                 # the translated form as well.
+                if not isinstance(location, str):
+                    raise BridgeError(400, f"invalid location: {location!r}")
                 candidates = [location]
                 if "!" in location:
                     candidates.append(location.replace("!", ":"))
@@ -476,7 +499,7 @@ class SessionManager:
             address = req.get("address")
             location = req.get("location")
             if address is not None:
-                addr = parse_address(address)
+                addr = _parse_address(address)
                 ok = client.clear_breakpoint(addr)
             elif location:
                 addr = None
@@ -490,7 +513,7 @@ class SessionManager:
             if not ok:
                 raise BridgeError(404, "breakpoint not found")
             if address is not None:
-                sess.bp_registry.pop(parse_address(address), None)
+                sess.bp_registry.pop(addr, None)
             elif location:
                 for known_addr, known_loc in list(sess.bp_registry.items()):
                     if known_loc == location:
@@ -515,8 +538,8 @@ class SessionManager:
     def read_memory(self, req: dict) -> dict:
         with self.lock:
             sess = self._require_session(req.get("session_id"))
-            addr = parse_address(req.get("address", 0))
-            size = int(req.get("size", 0))
+            addr = _parse_address(req.get("address", 0))
+            size = _as_int(req.get("size", 0), "size")
             if size <= 0:
                 raise BridgeError(400, "size must be positive")
             try:
@@ -532,8 +555,8 @@ class SessionManager:
         with self.lock:
             sess = self._require_session(req.get("session_id"))
             client = sess.client
-            addr = parse_address(req.get("address", 0))
-            count = int(req.get("count", 16))
+            addr = _parse_address(req.get("address", 0))
+            count = _as_int(req.get("count", 16), "count")
             instructions = []
             for _ in range(max(0, count)):
                 ins = client.disassemble_at(addr)

@@ -258,6 +258,32 @@ def test_callstack_is_explicit_not_implemented(started):
     assert "not_implemented" in resp.payload["error"]
 
 
+# -------------------------------------------------------- malformed arguments
+
+def test_malformed_numeric_arguments_are_400_not_500(started):
+    client, _fake, sid, _ = started
+    # A non-numeric size / count, a malformed address, and a non-string
+    # location are client errors (400), not internal bridge errors (500):
+    # the MCP side already translates these (debugger/x64dbg.py::_as_int),
+    # the bridge must do the same instead of leaking ValueError/TypeError.
+    cases = [
+        ("POST", "/memory", {"session_id": sid, "address": "0x140000000",
+                             "size": "abc"}),
+        ("POST", "/memory", {"session_id": sid, "address": "zzz", "size": 4}),
+        ("POST", "/disasm", {"session_id": sid, "address": "0x140001000",
+                             "count": "abc"}),
+        ("POST", "/disasm", {"session_id": sid, "address": "zzz", "count": 3}),
+        ("POST", "/breakpoints", {"session_id": sid, "address": "zzz"}),
+        ("POST", "/breakpoints", {"session_id": sid, "location": 123}),
+        ("DELETE", "/breakpoints", {"session_id": sid, "address": "zzz"}),
+    ]
+    for method, path, body in cases:
+        resp = client.call(method, path, body)
+        assert resp.status == 400, (method, path, body, resp.payload)
+        assert "error" in resp.payload
+        assert "internal bridge error" not in resp.payload["error"]
+
+
 # ------------------------------------------------------------ remote mode
 
 def test_remote_mode_lifecycle_uses_load_and_unload(remote_bridge):
