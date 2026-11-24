@@ -30,6 +30,17 @@ and the project uses [Semantic Versioning](https://semver.org/).
   named message, and a non-string `location` is refused the same way.
   Pinned by a new test in `bridge_adapter/tests/test_adapter.py`.
 
+- **`BRIDGE_PORT` is validated at startup** — a typo
+  (`BRIDGE_PORT=eighty`) used to crash the bridge adapter's `main()`
+  with a bare `ValueError` traceback at argparse setup, and an
+  out-of-range port (0, 99999) only failed later at bind time with a
+  confusing socket error: the same failure shape `config._parse_port`
+  already guards for `RELAB_PORT` on the server side. The adapter now
+  has its own `_parse_port` (same FATAL message shape, `SystemExit(2)`)
+  applied to the effective port, whether it comes from `BRIDGE_PORT`
+  or `--port`. Pinned by new tests in
+  `bridge_adapter/tests/test_adapter.py`.
+
 - **Malformed numeric arguments are structured errors, not unhandled
   crashes** — `debug_read_memory` / `debug_disassemble` / `debug_attach`
   coerced `size` / `count` / `pid` with a bare `int()`, and

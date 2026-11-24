@@ -4,8 +4,11 @@ real HTTP against the adapter with a fake x64dbg-automate client."""
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import adapter as adapter_mod  # noqa: E402
 from fake_automate import (  # noqa: E402
     CREATEFILEW_ADDR,
     DEBUGGEE_PID,
@@ -304,3 +307,77 @@ def test_remote_mode_lifecycle_uses_load_and_unload(remote_bridge):
     resp = client.post("/session/start", {"pid": 999})
     assert resp.status == 200
     assert fake.attach_calls == [999]
+
+
+# ------------------------------------------------------- BRIDGE_PORT parsing
+
+class _DummyServer:
+    """Stand-in for the HTTP server: records the bind address and
+    returns immediately from serve_forever()."""
+
+    instances = []
+
+    def __init__(self, host, port, manager):
+        self.host = host
+        self.port = port
+        self.manager = manager
+        _DummyServer.instances.append(self)
+
+    def serve_forever(self):
+        return None
+
+
+@pytest.fixture()
+def _no_server(monkeypatch):
+    """Run adapter.main() without touching the network or x64dbg."""
+    monkeypatch.setattr(adapter_mod, "default_factory_from_env",
+                        lambda: ("spawn", lambda target_exe: None))
+    monkeypatch.setattr(
+        adapter_mod, "make_server",
+        lambda host, port, manager: _DummyServer(host, port, manager))
+    # main() re-exports --x64dbg-path into the environment; pre-set it
+    # to the same default so the test process is left untouched.
+    monkeypatch.setenv("XAUTO_X64DBG_PATH", "x64dbg")
+    _DummyServer.instances.clear()
+    return _DummyServer
+
+
+def test_bridge_port_typo_fails_fast(monkeypatch, capsys, _no_server):
+    # BRIDGE_PORT=eighty used to crash main() with a bare ValueError
+    # traceback at argparse setup -- the same failure shape
+    # config._parse_port already guards for RELAB_PORT.
+    monkeypatch.setenv("BRIDGE_PORT", "eighty")
+    with pytest.raises(SystemExit) as exc:
+        adapter_mod.main([])
+    assert exc.value.code == 2
+    assert "FATAL: BRIDGE_PORT='eighty'" in capsys.readouterr().err
+    assert _DummyServer.instances == []  # no server was even built
+
+
+def test_bridge_port_out_of_range_fails_fast(monkeypatch, capsys, _no_server):
+    # An out-of-range port used to fail only later at bind time with a
+    # confusing socket error.
+    monkeypatch.setenv("BRIDGE_PORT", "99999")
+    with pytest.raises(SystemExit) as exc:
+        adapter_mod.main([])
+    assert exc.value.code == 2
+    assert "FATAL: BRIDGE_PORT=99999 is out of range" in capsys.readouterr().err
+    assert _DummyServer.instances == []
+
+
+def test_cli_port_out_of_range_fails_fast(monkeypatch, capsys, _no_server):
+    monkeypatch.delenv("BRIDGE_PORT", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        adapter_mod.main(["--port", "0"])
+    assert exc.value.code == 2
+    assert "FATAL: --port=0 is out of range" in capsys.readouterr().err
+    assert _DummyServer.instances == []
+
+
+def test_valid_bridge_port_starts_server(monkeypatch, capsys, _no_server):
+    monkeypatch.setenv("BRIDGE_PORT", "27043")
+    adapter_mod.main([])
+    assert len(_DummyServer.instances) == 1
+    assert _DummyServer.instances[0].host == "127.0.0.1"
+    assert _DummyServer.instances[0].port == 27043
+    assert "27043" in capsys.readouterr().out

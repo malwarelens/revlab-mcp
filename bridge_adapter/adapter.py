@@ -695,17 +695,52 @@ def make_server(host: str, port: int,
     return ThreadingHTTPServer((host, port), handler)
 
 
+def _parse_port(raw: str, what: str = "BRIDGE_PORT") -> int:
+    """Parse a port value, failing fast with a clear message.
+
+    A typo (``BRIDGE_PORT=eighty``) used to crash main() with a bare
+    ValueError traceback at argparse setup, and an out-of-range port
+    (0, 99999) only failed later at bind time with a confusing socket
+    error -- the same failure shape config._parse_port already guards
+    for RELAB_PORT on the server side. Valid ports are 1-65535.
+    """
+    try:
+        port = int(raw)
+    except (TypeError, ValueError):
+        print(
+            "FATAL: %s=%r is not a valid port number "
+            "(expected an integer 1-65535)." % (what, raw),
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    if not 1 <= port <= 65535:
+        print(
+            "FATAL: %s=%d is out of range "
+            "(expected an integer 1-65535)." % (what, port),
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return port
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="revlab x64dbg bridge adapter (x64dbg-automate backend)")
     parser.add_argument("--host", default=os.environ.get("BRIDGE_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int,
-                        default=int(os.environ.get("BRIDGE_PORT", "27042")))
+    parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--x64dbg-path",
                         default=os.environ.get("XAUTO_X64DBG_PATH", "x64dbg"),
                         help="spawn mode: path to x64dbg.exe/x32dbg.exe "
                              "or the x96dbg.exe launcher")
     args = parser.parse_args(argv)
+
+    # --port wins over BRIDGE_PORT; either way the effective port is
+    # validated up front (see _parse_port), before any factory or
+    # server work.
+    if args.port is not None:
+        port = _parse_port(str(args.port), "--port")
+    else:
+        port = _parse_port(os.environ.get("BRIDGE_PORT", "27042"))
 
     # CLI path wins over the env default when explicitly different is
     # overkill; simply re-export it for the factory builder.
@@ -716,9 +751,9 @@ def main(argv=None):
         manager = SessionManager("remote", remote_client=factory_or_client)
     else:
         manager = SessionManager("spawn", spawn_factory=factory_or_client)
-    server = make_server(args.host, args.port, manager)
+    server = make_server(args.host, port, manager)
     print(f"revlab x64dbg bridge adapter listening on "
-          f"http://{args.host}:{args.port} (mode={mode}, "
+          f"http://{args.host}:{port} (mode={mode}, "
           f"backend=x64dbg-automate)", flush=True)
     try:
         server.serve_forever()
