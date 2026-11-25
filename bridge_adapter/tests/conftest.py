@@ -51,6 +51,25 @@ class BridgeHttpClient:
     def delete(self, path, body):
         return self.call("DELETE", path, body)
 
+    def post_raw(self, path, data: bytes, headers: dict):
+        """Send an exact byte body with caller-chosen headers (so a
+        test can send a non-object JSON document or a bogus
+        Content-Length, which urllib's json helper cannot express)."""
+        import http.client
+        from urllib.parse import urlparse
+
+        parsed = urlparse(self.base)
+        conn = http.client.HTTPConnection(parsed.hostname, parsed.port,
+                                          timeout=5)
+        try:
+            conn.request("POST", path, body=data, headers=headers)
+            resp = conn.getresponse()
+            return HttpResult(resp.status, json.loads(resp.read()))
+        except urllib.error.HTTPError as e:
+            return HttpResult(e.code, json.loads(e.read()))
+        finally:
+            conn.close()
+
 
 def _serve(manager):
     server = adapter_mod.make_server("127.0.0.1", 0, manager)

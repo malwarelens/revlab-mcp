@@ -625,13 +625,29 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _body(self) -> dict:
-        length = int(self.headers.get("Content-Length") or 0)
-        if not length:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            # A non-numeric Content-Length is a client error, not a
+            # reason to drop the connection: _body() runs outside
+            # _dispatch, so the ValueError used to kill the handler
+            # thread with no HTTP response at all. Treat the request
+            # as body-less and let the route answer with its
+            # structured 400.
+            return {}
+        if length <= 0:
             return {}
         try:
-            return json.loads(self.rfile.read(length) or b"{}")
+            body = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
             return {}
+        # Every route does req.get(...): a request body that is valid
+        # JSON but not an object (a list, a string, a number) used to
+        # leak through _dispatch's last-resort guard as a 500
+        # 'internal bridge error', even though the fault is the
+        # caller's. Treat it as an empty body so the route answers
+        # with its structured 400 instead.
+        return body if isinstance(body, dict) else {}
 
     def _query_session_id(self):
         qs = parse_qs(urlparse(self.path).query)

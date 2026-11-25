@@ -287,6 +287,25 @@ def test_malformed_numeric_arguments_are_400_not_500(started):
         assert "internal bridge error" not in resp.payload["error"]
 
 
+def test_malformed_request_body_is_400_not_500(bridge):
+    client, _fake = bridge
+    # A request body that is valid JSON but not an object is a client
+    # error: every route does req.get(...), so a list / string / number
+    # used to leak through _dispatch as a 500 'internal bridge error'.
+    for raw in (b"[1, 2]", b'"hello"', b"42"):
+        resp = client.post_raw("/session/start", raw,
+                               {"Content-Type": "application/json"})
+        assert resp.status == 400, (raw, resp.payload)
+        assert "internal bridge error" not in resp.payload["error"]
+    # A non-numeric Content-Length used to crash _body() outside
+    # _dispatch and drop the connection with no HTTP response at all.
+    resp = client.post_raw("/session/start", b"{}",
+                           {"Content-Type": "application/json",
+                            "Content-Length": "abc"})
+    assert resp.status == 400, resp.payload
+    assert "internal bridge error" not in resp.payload["error"]
+
+
 # ------------------------------------------------------------ remote mode
 
 def test_remote_mode_lifecycle_uses_load_and_unload(remote_bridge):

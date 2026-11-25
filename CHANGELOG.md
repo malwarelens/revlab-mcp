@@ -18,6 +18,20 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Bridge adapter answers a malformed request body with 400, not
+  500 (or a dropped connection)** — `Handler._body()` returned
+  `json.loads(...)` unchecked, so a request body that is valid JSON
+  but not an object (a list, a string, a number) reached the routes'
+  `req.get(...)` and leaked through `_dispatch`'s last-resort guard
+  as a 500 "internal bridge error", and a non-numeric
+  `Content-Length` crashed `_body()` outside `_dispatch` entirely,
+  killing the handler thread with no HTTP response at all. A
+  non-object document is now treated as an empty body (so the route
+  answers with its structured 400) and a bad `Content-Length` is
+  treated as body-less the same way. Pinned by a new test in
+  `bridge_adapter/tests/test_adapter.py`
+  (`test_malformed_request_body_is_400_not_500`).
+
 - **Bridge adapter answers malformed arguments with 400, not 500** —
   `/memory`, `/disasm` and `/breakpoints` coerced caller-supplied
   `size` / `count` / `address` with a bare `int()` / `parse_address()`,
