@@ -287,6 +287,44 @@ def test_malformed_numeric_arguments_are_400_not_500(started):
         assert "internal bridge error" not in resp.payload["error"]
 
 
+def test_start_with_non_numeric_pid_is_400_without_spawning(bridge):
+    client, fake = bridge
+    # A non-numeric pid is a client error, and it must be refused
+    # before a debugger is spawned for a request that cannot succeed:
+    # previously int(pid) only failed inside the attach call, after
+    # _new_client had launched x64dbg and _cleanup_client had to tear
+    # it down again.
+    resp = client.post("/session/start", {"pid": "abc"})
+    assert resp.status == 400, resp.payload
+    assert "invalid pid" in resp.payload["error"]
+    assert "internal bridge error" not in resp.payload["error"]
+    assert fake.debugging is False
+    assert fake.terminate_calls == 0
+
+
+def test_start_with_non_numeric_pid_is_400_without_attaching(remote_bridge):
+    client, fake = remote_bridge
+    # Same refusal in remote mode, without touching the shared client.
+    resp = client.post("/session/start", {"pid": "abc"})
+    assert resp.status == 400, resp.payload
+    assert "invalid pid" in resp.payload["error"]
+    assert fake.attach_calls == []
+
+
+def test_control_run_with_bad_wait_timeout_is_400_without_resuming(started):
+    client, fake, sid, _ = started
+    # A non-numeric wait_stop_timeout must be refused before the
+    # debuggee is resumed: previously int(wait) only failed after
+    # client.go(), so a rejected request still left it running.
+    assert fake.running is False
+    resp = client.post("/control", {"session_id": sid, "action": "run",
+                                    "wait_stop_timeout": "abc"})
+    assert resp.status == 400, resp.payload
+    assert "invalid wait_stop_timeout" in resp.payload["error"]
+    assert "internal bridge error" not in resp.payload["error"]
+    assert fake.running is False
+
+
 def test_malformed_request_body_is_400_not_500(bridge):
     client, _fake = bridge
     # A request body that is valid JSON but not an object is a client

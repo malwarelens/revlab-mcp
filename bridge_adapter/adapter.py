@@ -292,6 +292,14 @@ class SessionManager:
                 raise BridgeError(400, "either 'path' or 'pid' is required")
             if path and pid is not None:
                 raise BridgeError(400, "give either 'path' or 'pid', not both")
+            # Validate the pid before a debugger is spawned for a
+            # request that cannot succeed: a non-numeric pid used to
+            # fail only at int(pid) inside the attach call, after
+            # _new_client had already launched x64dbg (spawn mode)
+            # and _cleanup_client had to tear it down again, with a
+            # generic 'session start failed' 400.
+            if pid is not None:
+                pid = _as_int(pid, "pid")
 
             client = self._new_client(path or None)
             sess = Session(uuid.uuid4().hex, client)
@@ -302,14 +310,14 @@ class SessionManager:
                             raise BridgeError(
                                 400, f"failed to load executable: {path}")
                     else:
-                        if not client.attach(int(pid)):
+                        if not client.attach(pid):
                             raise BridgeError(
                                 400, f"failed to attach to pid {pid}")
                 else:
                     if path:
                         client.start_session(path, arguments, cwd)
                     else:
-                        client.start_session_attach(int(pid))
+                        client.start_session_attach(pid)
             except BridgeError:
                 if self.mode == "spawn":
                     self._cleanup_client(client)
@@ -323,7 +331,7 @@ class SessionManager:
             try:
                 sess.debuggee_pid = client.debugee_pid()
             except Exception:
-                sess.debuggee_pid = int(pid) if pid is not None else None
+                sess.debuggee_pid = pid if pid is not None else None
             try:
                 sess.log_cursor = client.get_log(0, 0, "")[0]
             except Exception:
@@ -369,13 +377,20 @@ class SessionManager:
             action = req.get("action")
             try:
                 if action == "run":
+                    # Validate wait_stop_timeout before resuming the
+                    # debuggee: a non-numeric value used to fail only
+                    # at int(wait), after client.go() had already
+                    # resumed it, so a rejected request still left
+                    # the debuggee running.
+                    wait = req.get("wait_stop_timeout")
+                    timeout = (_as_int(wait, "wait_stop_timeout")
+                               if wait else None)
                     ok = client.go()
                     # Optional adapter extension (not in BRIDGE.md):
                     # callers that want run-to-next-stop semantics can
                     # pass wait_stop_timeout (seconds).
-                    wait = req.get("wait_stop_timeout")
-                    if ok and wait:
-                        client.wait_until_stopped(timeout=int(wait))
+                    if ok and timeout is not None:
+                        client.wait_until_stopped(timeout=timeout)
                 elif action == "pause":
                     ok = client.pause()
                 elif action == "step_into":

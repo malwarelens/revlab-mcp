@@ -18,6 +18,16 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Bridge adapter validates numeric arguments before acting on
+  them** — a non-numeric `pid` on `/session/start` used to fail
+  only at `int(pid)` inside the attach call, after a debugger had
+  already been spawned (and torn down again) for a request that
+  could never succeed, and a non-numeric `wait_stop_timeout` on
+  `/control` failed only after `go()` had already resumed the
+  debuggee. Both are now refused up front with a named 400
+  (`invalid pid` / `invalid wait_stop_timeout`) and no side effect.
+  Pinned by new tests in `bridge_adapter/tests/test_adapter.py`.
+
 - **Bridge adapter answers a malformed request body with 400, not
   500 (or a dropped connection)** — `Handler._body()` returned
   `json.loads(...)` unchecked, so a request body that is valid JSON
