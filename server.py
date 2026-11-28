@@ -219,7 +219,25 @@ def build_server(cfg: Config) -> FastMCP:
         if proc.returncode != 0 or not cache_file.is_file():
             raise RuntimeError(
                 f"triage.py failed (rc={proc.returncode}): {proc.stderr[-500:]}")
-        return json.loads(cache_file.read_text(encoding="utf-8"))
+        # A triage run that exits 0 but writes an unreadable or
+        # wrong-shaped cache must fail the same way, not leak the raw
+        # JSONDecodeError -- or, for a list, serve the bare list as
+        # the triage result, which then crashes get_strings_summary
+        # on triage.get. The cached-read path above already treats
+        # both shapes as corrupt and recomputes; here there is
+        # nothing left to fall back to, so the failure names the
+        # cache file instead of the parse error.
+        try:
+            fresh = json.loads(cache_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            raise RuntimeError(
+                f"triage.py wrote an unreadable triage cache: {exc}") from exc
+        if not isinstance(fresh, dict):
+            raise RuntimeError(
+                "triage.py wrote a triage cache with the wrong "
+                "top-level shape (expected object, got "
+                f"{type(fresh).__name__})")
+        return fresh
 
     # -- sample store ---------------------------------------------------------
     @mcp.tool()

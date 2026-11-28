@@ -18,6 +18,17 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A triage run that exits 0 but writes a bad cache now fails
+  cleanly** — `run_triage` re-read its freshly written cache file
+  unchecked, so a triage.py that succeeded while writing partial
+  JSON leaked the raw `JSONDecodeError` out of `static_triage` /
+  `get_strings_summary` as an unhandled tool error, and one that
+  wrote a JSON list was served verbatim as the triage result (and
+  crashed `get_strings_summary` on `triage.get`). The cached-read
+  path already treats both shapes as corrupt and recomputes; the
+  recompute path now fails with a named `RuntimeError` instead.
+  Pinned by new tests in `tests/test_triage_cache.py`.
+
 - **Bridge adapter validates numeric arguments before acting on
   them** — a non-numeric `pid` on `/session/start` used to fail
   only at `int(pid)` inside the attach call, after a debugger had

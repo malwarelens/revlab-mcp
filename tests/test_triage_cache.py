@@ -6,6 +6,12 @@ Both used to crash static_triage (and, for the wrong-shape case,
 get_strings_summary via triage.get) with an unhandled tool error
 instead of recomputing. These tests pin the recovery through the real
 server tools, called in-process via FastMCP's call_tool.
+
+The same two shapes can also come out of the recompute path itself:
+a triage run that exits 0 while writing partial or wrong-shaped JSON.
+That used to leak the raw JSONDecodeError (or serve the bare list,
+crashing get_strings_summary) instead of failing cleanly; the last
+two tests pin the named failure for that case.
 """
 
 from __future__ import annotations
@@ -22,6 +28,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import make_samples  # noqa: E402
+import server  # noqa: E402 -- monkeypatched TRIAGE_SCRIPT below
 from config import Config  # noqa: E402
 from server import build_server  # noqa: E402
 
@@ -49,6 +56,51 @@ def _lab(tmp_path):
     cache = tmp_path / "artifacts" / "triage" / f"{sample_id}.json"
     assert cache.is_file()
     return mcp, sample_id, cache
+
+
+def _lab_uncomputed(monkeypatch, tmp_path, payload: str):
+    """A server with one registered PE sample and no triage cache yet,
+    whose triage script exits 0 while writing `payload` as the cache
+    file -- as a triage.py that succeeds yet produces garbage would."""
+    script = tmp_path / "fake_triage.py"
+    script.write_text(
+        "import sys\n"
+        "out = sys.argv[sys.argv.index('--json') + 1]\n"
+        f"open(out, 'w').write({payload!r})\n"
+    )
+    monkeypatch.setattr(server, "TRIAGE_SCRIPT", script)
+    paths = make_samples.build_samples(tmp_path / "inbox")
+    cfg = Config(samples_dir=tmp_path / "samples",
+                 artifacts_dir=tmp_path / "artifacts")
+    mcp = build_server(cfg)
+    meta = _call(mcp, "register_sample", source_path=str(paths["pe"]))
+    return mcp, meta["sample_id"]
+
+
+def test_recomputed_partial_json_is_a_named_failure(monkeypatch, tmp_path):
+    """A triage run that exits 0 but writes partial JSON used to leak
+    the raw JSONDecodeError out of static_triage / get_strings_summary
+    as an unhandled tool error. The failure now names the cache file,
+    matching the triage-failed shape."""
+    mcp, sample_id = _lab_uncomputed(monkeypatch, tmp_path,
+                                     '{"hashes": {"sha256": "abc", ')
+    with pytest.raises(Exception, match="unreadable triage cache"):
+        _call(mcp, "static_triage", sample_id=sample_id)
+    with pytest.raises(Exception, match="unreadable triage cache"):
+        _call(mcp, "get_strings_summary", sample_id=sample_id)
+
+
+def test_recomputed_wrong_shape_cache_is_a_named_failure(monkeypatch,
+                                                         tmp_path):
+    """A triage run that exits 0 but writes a JSON list used to be
+    served verbatim as the triage result by static_triage, and crashed
+    get_strings_summary with AttributeError on triage.get. Both now
+    fail naming the wrong top-level shape instead."""
+    mcp, sample_id = _lab_uncomputed(monkeypatch, tmp_path, "[1, 2, 3]")
+    with pytest.raises(Exception, match="wrong top-level shape"):
+        _call(mcp, "static_triage", sample_id=sample_id)
+    with pytest.raises(Exception, match="wrong top-level shape"):
+        _call(mcp, "get_strings_summary", sample_id=sample_id)
 
 
 def test_partial_json_cache_is_recomputed(tmp_path):
